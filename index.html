@@ -1,0 +1,111 @@
+<!doctype html>
+<html class="no-js" lang="">
+
+<head>
+  <!-- Character encoding for the document -->
+  <meta charset="utf-8">
+  <!-- Viewport configuration for responsive web design -->
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Title of the page shown in the browser tab -->
+  <title></title>
+  <!-- Link to the external CSS stylesheet -->
+  <link rel="stylesheet" href="css/style.css">
+  <!-- Brief description of the page content for search engines -->
+  <meta name="description" content="">
+
+  <!-- Open Graph title for social media sharing -->
+  <meta property="og:title" content="">
+  <!-- Open Graph type of the content (e.g., website, article) -->
+  <meta property="og:type" content="">
+  <!-- Open Graph URL for the shared page -->
+  <meta property="og:url" content="">
+  <!-- Open Graph image shown when the page is shared -->
+  <meta property="og:image" content="">
+  <!-- Alternative text for the Open Graph image -->
+  <meta property="og:image:alt" content="">
+
+  <!-- Generic favicon in ICO format -->
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <!-- Scalable favicon in SVG format -->
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <!-- Icon for Apple devices (iPhone, iPad) -->
+  <link rel="apple-touch-icon" href="icon.png">
+
+  <!-- Link to the web app manifest file -->
+  <link rel="manifest" href="site.webmanifest">
+  <!-- HTML in your document's head -->
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <!-- Theme color for the browser address bar in light mode -->
+  <meta
+    name="theme-color"
+    content="cornflowerblue"
+    media="(prefers-color-scheme: light)" />
+  <!-- Theme color for the browser address bar in dark mode -->
+  <meta
+    name="theme-color"
+    content="dimgray"
+    media="(prefers-color-scheme: dark)" />
+</head>
+
+<body >
+<div class="container">
+  <header class="head">
+    <h1>CityGen<em>.</em></h1>
+  </header>
+  <div class="steps">
+    <h2>Steps</h2>
+    <ol id="steps-list">
+    </ol>
+  </div>
+  <div class="map">
+      <svg id="map_svg" viewBox="0 0 3000 3000">
+        <g id="grid">
+          <path id="grid-h" d="
+          M0 0  H3005
+          v250 H -5
+          v250 H3005
+          v250 H -5
+          v250 H3005
+          v250 H -5
+          v250 H3005
+          v250 H -5
+          v250 H3005
+          v250 H -5
+          v250 H3005
+          v250 H -5
+          v250 H3005
+          "
+
+                fill="none"
+                stroke="var(--mute)" />
+          <path id="grid-v" d="
+          M0 0
+          V 3005 h 250 V-5 h 250
+          V 3005 h 250 V-5 h 250
+          V 3005 h 250 V-5 h 250
+          V 3005 h 250 V-5 h 250
+          V 3005 h 250 V-5 h 250
+          V 3005 h 250 V-5 H3000
+          V3005
+          "
+                fill="none"
+                stroke="var(--mute)" />
+        </g>
+        <g id="nodes"></g>
+        <g id="edges"></g>
+      </svg>
+  </div>
+  <div class="details">details</div>
+  <footer class="foot"></footer>
+</div>
+<script type="module" src="js/app.js"></script>
+<script type="module">
+  import { map, stepResults } from "./js/app.js";
+  // You can now access the map object here
+  console.log("Map object accessed from index.html:", map);
+</script>
+
+</body>
+
+</html>
