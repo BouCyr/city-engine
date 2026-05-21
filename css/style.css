@@ -92,5 +92,5 @@ li:hover::marker {
 
 
 .cell {
-  fill: rgba(200, 100, 200, 0.25);
+  fill: rgba(200, 100, 200, 0.5);
 }

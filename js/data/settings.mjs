@@ -10,6 +10,9 @@ export function Settings(seed="seed") {
     scatter: {
       nb: C.POI_NB,
       safeZone: C.SAFE_ZONE,
-    }
+    },
+    prune: {
+      threshold: C.PRUNE_THRESHOLD,
+    },
   }
 }

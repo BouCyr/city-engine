@@ -18,8 +18,7 @@ export function cells(settings, map) {
     if (polygon.length < 3) return;
 
     const cellEdges = [];
-    const fill = randomGray(settings.rng);
-    const cell = Cell(`Cell${siteIndex}`, cellEdges, fill);
+    const cell = Cell(`Cell${siteIndex}`, cellEdges);
 
     for (let index = 0; index < polygon.length; index += 1) {
       const startPoint = polygon[index];
@@ -160,11 +159,6 @@ function sideOfEdge(edge, point) {
   const dx = edge.end.x - edge.start.x;
   const dy = edge.end.y - edge.start.y;
   return dx * (point.y - edge.start.y) - dy * (point.x - edge.start.x);
-}
-
-function randomGray(rng) {
-  const value = Math.floor(rng.between(96, 216));
-  return `rgb(${value},${value},${value})`;
 }
 
 function isBoundaryPoint(point, size) {
