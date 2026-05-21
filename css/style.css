@@ -89,3 +89,7 @@ li:hover::marker {
 }
 
 .details { grid-area: 2 / 3 / 3 / 4; }
+
+
+.cell {
+}

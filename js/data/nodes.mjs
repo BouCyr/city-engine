@@ -4,13 +4,14 @@ export function Poi(id, x,y, drawFn = null, flags= []){
   return Node(id, x,y, "POI", drawFn, flags)
 }
 
-function Node(id, x,y, type, drawFn = null, flags= []){
+export function Node(id, x,y, type, drawFn = null, flags= []){
   return {
     id:id,
     x:x,
     y:y,
     type:type,
     flags: new Set(flags),
+    edges: new Set(),
     draw:drawFn?drawFn:createDrawPointFn()
   }
 }

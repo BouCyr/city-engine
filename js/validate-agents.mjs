@@ -5,6 +5,7 @@ import {Map} from "./data/map.mjs";
 import {Poi} from "./data/nodes.mjs";
 import {Settings} from "./data/settings.mjs";
 import {runPipeline} from "./pipeline.mjs";
+import {cells} from "./steps/001-gather.mjs";
 
 function createSvgProbe() {
   const calls = [];
@@ -100,9 +101,68 @@ function validateStepRngDeterminism() {
   assert.equal(settings.createStepRng("Scatter").next(), firstScatter);
 }
 
+function validateGatherVoronoi() {
+  const settings = new Settings("voronoi-test");
+  const input = new Map(settings);
+  input.nodes.push(
+    Poi("A", 750, 750),
+    Poi("B", 2250, 750),
+    Poi("C", 1500, 2250),
+  );
+
+  const result = cells({
+    ...settings,
+    rng: settings.createStepRng("Gather"),
+  }, input);
+
+  assert.equal(result.cells.length, 3);
+  assert.ok(result.nodes.length > 0);
+  assert.ok(result.edges.length > 0);
+  assert.ok(result.nodes.every(node => node.type === "Voronoi"));
+
+  for (const edge of result.edges) {
+    assert.ok(result.nodes.includes(edge.start));
+    assert.ok(result.nodes.includes(edge.end));
+    assert.ok(edge.start.edges.has(edge));
+    assert.ok(edge.end.edges.has(edge));
+    assert.ok(edge.leftCell || edge.rightCell);
+  }
+
+  for (const cell of result.cells) {
+    assert.ok(cell.edges.length >= 3);
+    assert.ok(/^rgb\(\d+,\d+,\d+\)$/.test(cell.fill));
+    assert.ok(cell.edges.every(edge => result.edges.includes(edge)));
+  }
+
+  assert.ok(result.nodes.some(node => node.flags.has("Boundary")));
+  assert.ok(result.edges.some(edge => edge.flags.has("Boundary")));
+}
+
+function validateCellDrawing() {
+  const settings = new Settings("cell-draw-test");
+  const input = new Map(settings);
+  input.nodes.push(
+    Poi("A", 750, 750),
+    Poi("B", 2250, 750),
+    Poi("C", 1500, 2250),
+  );
+  const result = cells({
+    ...settings,
+    rng: settings.createStepRng("Gather"),
+  }, input);
+
+  const {calls, svg} = createSvgProbe();
+  result.cells[0].draw(svg);
+  assert.equal(calls[0].name, "polygon");
+  assert.ok(calls[0].attrs.points.length > 0);
+  assert.ok(calls[0].attrs.fill.startsWith("rgb("));
+}
+
 validateCloneIdentityAndFlags();
 validateSnapshotDrawingUsesClonedNodes();
 validatePipelineClonesBeforeSteps();
 validateStepRngDeterminism();
+validateGatherVoronoi();
+validateCellDrawing();
 
 console.log("AGENTS.md compliance validation passed");

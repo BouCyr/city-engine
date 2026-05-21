@@ -2,14 +2,19 @@
 
 
 export function Edge(id, start, end, type, drawFn = null, flags= []){
-  return {
+  const edge = {
     id:id,
     start:start,
     end:end,
     type:type,
     flags: new Set(flags),
+    leftCell:null,
+    rightCell:null,
     draw:drawFn?drawFn:createDrawEdgeFn()
   }
+  start.edges?.add(edge);
+  end.edges?.add(edge);
+  return edge;
 }
 
 
