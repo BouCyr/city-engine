@@ -8,8 +8,8 @@ const UINT32_RANGE = 2 ** 32;
 
 /**
  * WHAT: Build a seeded random API with helpers for raw values, ranges, and item picking.
- * HOW: Reuse the internal integer state for every call so each consumer advances the same deterministic stream.
- * WHY: Generation steps need one shared source of entropy to keep maps replayable from the same input seed.
+ * HOW: Reuse the internal integer state for every call so each step-scoped generator advances deterministically.
+ * WHY: Generation steps need independent entropy streams to keep maps replayable from the same input seed and step name.
  */
 export function createRNG(seed = "seed") {
   let state = xmur3(seed)();

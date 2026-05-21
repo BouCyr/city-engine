@@ -1,6 +1,6 @@
 import {steps} from "./steps.mjs";
 import {Settings} from "./data/settings.mjs";
-import {Map} from "./data/map.mjs";
+import {runPipeline} from "./pipeline.mjs";
 
 
 export {map, stepResults};
@@ -34,51 +34,6 @@ const svgDomElt = initUI();
 
 
 const settings = new Settings();
-
-
-let map = new Map(settings);
-
-const stepResults = [];
-stepResults.push({
-  step:"void",map:map
-});
-
-for(let i = 0; i < steps.length; i++){
-  const step = steps[i];
-  console.info(step.title, "Starting");
-  const stepMap  = step.process(settings, map);
-
-  stepResults.push({
-    step:step.title,
-    map:cloneDeepKeepFunctions(stepMap)
-  })
-  map=stepMap;
-  console.info(step.title, "Done");
-}
+const {map, stepResults} = runPipeline(settings);
 
 map.draw(svgDomElt);
-
-
-
-
-function cloneDeepKeepFunctions(value, seen = new WeakMap()) {
-  if (value === null || typeof value !== "object") return value;
-
-  if (seen.has(value)) return seen.get(value);
-
-  if (Array.isArray(value)) {
-    const arr = [];
-    seen.set(value, arr);
-    for (const item of value) arr.push(cloneDeepKeepFunctions(item, seen));
-    return arr;
-  }
-
-  const clone = Object.create(Object.getPrototypeOf(value));
-  seen.set(value, clone);
-
-  for (const key of Reflect.ownKeys(value)) {
-    clone[key] = cloneDeepKeepFunctions(value[key], seen);
-  }
-
-  return clone;
-}

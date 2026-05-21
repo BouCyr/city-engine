@@ -1,7 +1,7 @@
 
 
-export function Poi(id, x,y, type, layer, drawFn){
-  return Node(id, x,y, "POI")
+export function Poi(id, x,y, drawFn = null, flags= []){
+  return Node(id, x,y, "POI", drawFn, flags)
 }
 
 function Node(id, x,y, type, drawFn = null, flags= []){
@@ -11,17 +11,17 @@ function Node(id, x,y, type, drawFn = null, flags= []){
     y:y,
     type:type,
     flags: new Set(flags),
-    draw:drawFn?drawFn:createDrawPointFn(x,y)
+    draw:drawFn?drawFn:createDrawPointFn()
   }
 }
 
 
-function createDrawPointFn(x,y,r="5",fill="#BBB", stroke="#CCC", strokeWidth="2") {
-  return (svg)=>{
+function createDrawPointFn(r="5",fill="#BBB", stroke="#CCC", strokeWidth="2") {
+  return function drawPoint(svg){
     const layer = svg.getElementById("nodes");
     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    circle.setAttribute("cx", x);
-    circle.setAttribute("cy", y);
+    circle.setAttribute("cx", this.x);
+    circle.setAttribute("cy", this.y);
     circle.setAttribute("r", r);
     circle.setAttribute("fill", fill);
     circle.setAttribute("stroke", stroke);
