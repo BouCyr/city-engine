@@ -6,6 +6,7 @@ import {Poi} from "./data/nodes.mjs";
 import {Settings} from "./data/settings.mjs";
 import {runPipeline} from "./pipeline.mjs";
 import {cells} from "./steps/001-gather.mjs";
+import {relax} from "./steps/002-lloyd.mjs";
 
 function createSvgProbe() {
   const calls = [];
@@ -158,11 +159,46 @@ function validateCellDrawing() {
   assert.ok(calls[0].attrs.fill.startsWith("rgb("));
 }
 
+function validateLloydRelaxation() {
+  const settings = new Settings("lloyd-test");
+  const input = new Map(settings);
+  input.nodes.push(
+    Poi("A", 700, 700),
+    Poi("B", 2300, 700),
+    Poi("C", 1500, 2300),
+  );
+  const gathered = cells({
+    ...settings,
+    rng: settings.createStepRng("Gather"),
+  }, input);
+  const relaxed = relax({
+    ...settings,
+    rng: settings.createStepRng("Lloyd"),
+  }, gathered);
+
+  assert.equal(relaxed.cells.length, gathered.cells.length);
+  assert.ok(relaxed.nodes.length > 0);
+  assert.ok(relaxed.edges.length > 0);
+  assert.ok(relaxed.nodes.every(node => node.type === "Voronoi"));
+  assert.notDeepEqual(
+    relaxed.nodes.map(node => [Math.round(node.x), Math.round(node.y)]),
+    gathered.nodes.map(node => [Math.round(node.x), Math.round(node.y)]),
+  );
+
+  for (const edge of relaxed.edges) {
+    assert.ok(relaxed.nodes.includes(edge.start));
+    assert.ok(relaxed.nodes.includes(edge.end));
+    assert.ok(edge.start.edges.has(edge));
+    assert.ok(edge.end.edges.has(edge));
+  }
+}
+
 validateCloneIdentityAndFlags();
 validateSnapshotDrawingUsesClonedNodes();
 validatePipelineClonesBeforeSteps();
 validateStepRngDeterminism();
 validateGatherVoronoi();
 validateCellDrawing();
+validateLloydRelaxation();
 
 console.log("AGENTS.md compliance validation passed");

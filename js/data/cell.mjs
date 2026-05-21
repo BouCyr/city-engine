@@ -17,10 +17,8 @@ function createDrawCellFn(stroke = "none", strokeWidth = "0") {
       .map(point => `${point.x},${point.y}`)
       .join(" ");
 
-    polygon.classList.add("cell");
+    polygon.setAttribute("class", "cell");
     polygon.setAttribute("points", points);
-    polygon.setAttribute("fill", "rgba(200,100,220,0.25)");
-    //polygon.setAttribute("fill", this.fill);
     polygon.setAttribute("stroke", stroke);
     polygon.setAttribute("strokeWidth", strokeWidth);
 
@@ -28,7 +26,7 @@ function createDrawCellFn(stroke = "none", strokeWidth = "0") {
   };
 }
 
-function orderedCellPoints(cell) {
+export function orderedCellPoints(cell) {
   if (cell.edges.length === 0) return [];
   if (cell.edges.length === 1) return [cell.edges[0].start, cell.edges[0].end];
 
