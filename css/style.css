@@ -67,6 +67,19 @@ li:hover::marker {
   color: var(--accent-color);
 }
 
+.step-item {
+  cursor: pointer;
+}
+
+.step-item:focus-visible {
+  outline: 1px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.selected-step .step-first-letter {
+  color: var(--accent-color);
+}
+
 
 #map_svg{
   aspect-ratio: 1/1;
