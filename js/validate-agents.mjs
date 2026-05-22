@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import {cloneDeepKeepFunctions} from "./data/clone.mjs";
+import {Cell} from "./data/cell.mjs";
 import {Edge} from "./data/edge.mjs";
 import {Map} from "./data/map.mjs";
-import {Poi} from "./data/nodes.mjs";
+import {Node, Poi} from "./data/nodes.mjs";
 import {Settings} from "./data/settings.mjs";
 import {runPipeline} from "./pipeline.mjs";
 import {cells} from "./steps/001-gather.mjs";
 import {relax} from "./steps/002-lloyd.mjs";
 import {prune} from "./steps/003-prune.mjs";
+import {classifySeaLand, TERRAIN_COAST, TERRAIN_LAND, TERRAIN_SEA} from "./steps/004-sea-land.mjs";
 
 function createSvgProbe() {
   const calls = [];
@@ -285,6 +287,97 @@ function validatePruneBoundaryRules() {
   assert.throws(() => prune(oppositeSettings, oppositeMap), /opposite boundaries/);
 }
 
+function validateSeaLandStepClassifiesAndTags() {
+  const settings = new Settings("sea-land-test");
+  settings.coast = {
+    ...settings.coast,
+    seaBorders: ["WEST"],
+    threshold: 0.28,
+    largeScale: 900,
+    mediumScale: 350,
+    smallScale: 120,
+    largeAmplitude: 0,
+    mediumAmplitude: 0,
+    smallAmplitude: 0,
+    extraNoise: [],
+    sampleCount: 1,
+    smoothingPasses: 0,
+    artifactsMax: 0,
+  };
+
+  const map = new Map(settings);
+  const n1 = Node("a", 0, 0, "split", null, ["Boundary"]);
+  const n2 = Node("b", 1500, 0, "split", null, ["Boundary"]);
+  const n3 = Node("c", 3000, 0, "split", null, ["Boundary"]);
+  const n4 = Node("d", 3000, 3000, "split", null, ["Boundary"]);
+  const n5 = Node("e", 1500, 3000, "split", null, ["Boundary"]);
+  const n6 = Node("f", 0, 3000, "split", null, ["Boundary"]);
+  map.nodes.push(n1, n2, n3, n4, n5, n6);
+
+  const cellA = Cell("A", [], ["test"]);
+  const cellB = Cell("B", [], ["test"]);
+
+  const eTopA = Edge("eA_top", n1, n2, "Voronoi", null, ["Boundary"]);
+  const eRightA = Edge("eA_right", n2, n5, "Voronoi", null, ["Boundary"]);
+  const eBottomA = Edge("eA_bottom", n5, n6, "Voronoi", null, ["Boundary"]);
+  const eLeftA = Edge("eA_left", n6, n1, "Voronoi", null, ["Boundary"]);
+  const splitA = Edge("eA_split", n2, n5, "Voronoi", null);
+
+  cellA.edges.push(eTopA, splitA, eBottomA, eLeftA);
+  eTopA.leftCell = cellA;
+  splitA.leftCell = cellA;
+  eBottomA.leftCell = cellA;
+  eLeftA.leftCell = cellA;
+
+  const eTopB = Edge("eB_top", n2, n3, "Voronoi", null, ["Boundary"]);
+  const eRightB = Edge("eB_right", n3, n4, "Voronoi", null, ["Boundary"]);
+  const eBottomB = Edge("eB_bottom", n4, n5, "Voronoi", null, ["Boundary"]);
+  const splitB = Edge("eB_split", n5, n2, "Voronoi", null);
+
+  cellB.edges.push(eTopB, splitB, eBottomB, splitA);
+  eTopB.leftCell = cellB;
+  splitA.rightCell = cellB;
+  eBottomB.leftCell = cellB;
+  splitB.rightCell = cellB;
+
+  map.cells.push(cellA, cellB);
+  map.edges.push(eTopA, eRightA, eBottomA, eLeftA, splitA, eTopB, eRightB, eBottomB);
+
+  const result = classifySeaLand({
+    ...settings,
+    rng: settings.createStepRng("Sea-Land"),
+    coast: settings.coast,
+  }, map);
+
+  const seaLandCells = result.cells.filter((cell) => cell.type === TERRAIN_LAND || cell.type === TERRAIN_SEA);
+  assert.equal(seaLandCells.length, result.cells.length);
+  assert.ok(result.cells.every((cell) => cell.flags instanceof Set));
+  assert.ok(result.cells.every((cell) => cell.flags.has(cell.type)));
+
+  const sharedEdge = result.edges.find((edge) =>
+    (edge.leftCell === cellA && edge.rightCell === cellB) ||
+    (edge.leftCell === cellB && edge.rightCell === cellA)
+  );
+  assert.ok(sharedEdge?.flags?.has(TERRAIN_COAST));
+  assert.ok(
+    (sharedEdge?.leftCell?.type === TERRAIN_SEA && sharedEdge?.rightCell?.type === TERRAIN_LAND) ||
+    (sharedEdge?.leftCell?.type === TERRAIN_LAND && sharedEdge?.rightCell?.type === TERRAIN_SEA)
+  );
+
+  const boundaryEdge = result.edges.find((edge) =>
+    edge.leftCell === cellA && edge.rightCell === null && edge.start?.x === 0 && edge.end?.x === 1500
+  );
+  assert.ok(boundaryEdge?.flags?.has(TERRAIN_SEA) || boundaryEdge?.flags?.has(TERRAIN_LAND));
+
+  assert.ok(result.edges.every((edge) => edge.flags instanceof Set));
+  assert.ok(result.edges.every((edge) =>
+    edge.flags.has(TERRAIN_SEA) ||
+    edge.flags.has(TERRAIN_LAND) ||
+    edge.flags.has(TERRAIN_COAST)
+  ));
+  assert.equal(result.nodes.every((node) => node.draw === null), true);
+}
+
 validateCloneIdentityAndFlags();
 validateSnapshotDrawingUsesClonedNodes();
 validatePipelineClonesBeforeSteps();
@@ -295,5 +388,6 @@ validateLloydRelaxation();
 validatePruneRemovesAndRewires();
 validatePruneCellDeletion();
 validatePruneBoundaryRules();
+validateSeaLandStepClassifiesAndTags();
 
 console.log("AGENTS.md compliance validation passed");

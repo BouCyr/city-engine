@@ -14,5 +14,20 @@ export function Settings(seed="seed") {
     prune: {
       threshold: C.PRUNE_THRESHOLD,
     },
+    coast: {
+      seaBorders: ["WEST","SOUTH","NORTH","EAST"],
+      threshold: 0.28,
+      largeScale: 900,
+      mediumScale: 350,
+      smallScale: 120,
+      largeAmplitude: 0.18,
+      mediumAmplitude: 0.08,
+      smallAmplitude: 0.03,
+      extraNoise: [],
+      sampleCount: 4,
+      smoothingPasses: 1,
+      smoothingBias: 0.52,
+      artifactsMax: 1,
+    },
   }
 }

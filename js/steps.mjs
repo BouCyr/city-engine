@@ -2,6 +2,7 @@ import * as SCATTER  from "./steps/000-scatter.mjs";
 import * as GATHER  from "./steps/001-gather.mjs";
 import * as LLOYD  from "./steps/002-lloyd.mjs";
 import * as PRUNE  from "./steps/003-prune.mjs";
+import * as SEA_LAND from "./steps/004-sea-land.mjs";
 
 export const steps = [
 
@@ -39,6 +40,14 @@ export const steps = [
       `This step removes geometric noise by deleting short edges repeatedly until the entire graph has no edge shorter than <em>${settings.prune.threshold}</em>.`,
       `When a short edge is removed, its two endpoint nodes are merged and neighboring edges are rewired to keep the graph connected with consistent node references inside the current map.`,
       `The process is repeated after each merge so the result remains stable and clean, while keeping node identities and boundary constraints consistent with the existing map.`,
+    ],
+  },
+  {
+    title:"Coast",
+    process:SEA_LAND.classifySeaLand,
+    description: (settings, stepMap) => [
+      `This step classifies each current cell into <em>SEA</em> or <em>LAND</em> by combining a distance-from-sea-border field with layered deterministic noise.`,
+      `It stores terrain in <em>cell.type</em> and flags, updates every edge as <em>SEA</em>, <em>LAND</em>, or <em>COAST</em>, and then renders nodes as hidden for this terrain-only view.`,
     ],
   },
 ]

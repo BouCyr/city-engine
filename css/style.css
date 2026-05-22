@@ -12,6 +12,15 @@
   --mute: #bbb;
   --accent-color: #9d60ff;
 
+  --sea-fill: #79b8ff;
+  --land-fill: #bdbdbd;
+  --sea-edge: #2b71b7;
+  --land-edge: #5f6d89;
+  --coast-edge: #111111;
+
+  --cell-stroke-width: 0;
+  --edge-stroke-width: 2;
+
 }
 
 @media (prefers-color-scheme: dark) {
@@ -65,7 +74,7 @@ li:hover::marker {
   box-sizing: border-box;
   padding: 4px;
   display: grid;
-  grid-template-columns: min-content 1fr max-content;
+  grid-template-columns: max-content 1fr max-content;
   grid-template-rows: min-content 1fr min-content;
   grid-auto-flow: row;
   gap: 1em;
@@ -117,4 +126,29 @@ li:hover::marker {
 
 .cell {
   fill: rgba(200, 100, 200, 0.5);
+}
+
+.terrain-sea {
+  fill: var(--sea-fill);
+}
+
+.terrain-land {
+  fill: var(--land-fill);
+}
+
+.edge {
+  fill: none;
+  stroke-width: var(--edge-stroke-width);
+}
+
+.edge.terrain-sea {
+  stroke: var(--sea-edge);
+}
+
+.edge.terrain-land {
+  stroke: var(--land-edge);
+}
+
+.edge.terrain-coast {
+  stroke: var(--coast-edge);
 }
