@@ -1,15 +1,13 @@
 # TODO
-
 ## Right now
+1. Numbers in detail (time, nb cells, edges, etc.)
 2. Rework settings opening
-2. Collapsable settings groups
-3. Rework selected step (full accent)
-4. Area computation
-5. UI interaction
-6. Explanation/replay step
-
+3. Collapsable settings groups
+4. Rework selected step (full accent)
+5. Area computation
+6. UI interaction
+7. Explanation/replay step
 ## Macro
-
 1. Coastline
    1. prevent boundary cells to be sea if not near corner ?
    2. add directed noise ?
@@ -25,7 +23,6 @@
 7. Rivers to cells
 8. Trade route ?
 9. Road network
-
 ## Nice to have
 1. scale
 2. legend
