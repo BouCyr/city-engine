@@ -49,15 +49,20 @@
 </head>
 
 <body >
-<div class="container">
+  <div class="container">
   <header class="head">
     <h1>CityGen<em>.</em></h1>
   </header>
   <div class="steps">
-    <h2>Steps</h2>
+    <div class="steps-header">
+      <h2>Steps</h2>
+      <button id="settings-toggle" type="button">Settings</button>
+    </div>
     <ol id="steps-list">
     </ol>
   </div>
+  <aside id="settings-panel" class="settings">
+  </aside>
   <div class="map">
       <svg id="map_svg" viewBox="0 0 3000 3000">
         <g id="grid">
