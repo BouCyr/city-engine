@@ -2,7 +2,9 @@ import {steps} from "./steps.mjs";
 import {Settings} from "./data/settings.mjs";
 import {runPipeline} from "./pipeline.mjs";
 
-export let settings = new Settings();
+const defaultSettings = new Settings();
+
+export let settings = cloneSettingsDefaults();
 export let map;
 export let stepResults = [];
 
@@ -22,7 +24,7 @@ const SETTING_GROUPS = [
         label: "Map size",
         type: "number",
         min: 1,
-        step: 1,
+        step: 25,
         help: "Sets the width and height of the square map in SVG units.",
       },
     ],
@@ -35,7 +37,7 @@ const SETTING_GROUPS = [
         label: "Point count",
         type: "number",
         min: 1,
-        step: 1,
+        step: 50,
         help: "Sets how many initial city anchor points are sampled.",
       },
       {
@@ -43,7 +45,7 @@ const SETTING_GROUPS = [
         label: "Safe zone",
         type: "number",
         min: 0,
-        step: 1,
+        step: 10,
         help: "Keeps scattered points at least this far from the map edge.",
       },
     ],
@@ -56,7 +58,7 @@ const SETTING_GROUPS = [
         label: "Short edge threshold",
         type: "number",
         min: 0,
-        step: 1,
+        step: 5,
         help: "Removes and merges graph edges shorter than this length.",
       },
     ],
@@ -164,20 +166,17 @@ const SETTING_GROUPS = [
         step: 1,
         help: "Flips isolated terrain components up to this cell count.",
       },
-      {
-        path: "coast.extraNoise",
-        label: "Extra noise layers",
-        type: "json",
-        help: "Adds optional noise layers as JSON objects with scale and amplitude.",
-      },
     ],
   },
 ];
 
-const defaultSettings = new Settings();
 let svgDomElt;
 let currentStepIndex = null;
 let pendingRegeneration = null;
+
+function cloneSettingsDefaults() {
+  return new Settings(defaultSettings.seed);
+}
 
 function getSettingValue(source, path) {
   return path.split(".").reduce((value, key) => value?.[key], source);
@@ -254,13 +253,14 @@ function createSettingControl(definition, value) {
   input.id = settingInputId(definition.path);
   input.dataset.settingPath = definition.path;
   input.type = definition.type;
-  input.value = value;
 
   ["min", "max", "step", "pattern"].forEach((attribute) => {
     if (definition[attribute] !== undefined) {
       input.setAttribute(attribute, definition[attribute]);
     }
   });
+
+  input.value = value;
 
   if (definition.type === "range") {
     const row = createElement("div", "setting-control-row");
@@ -296,6 +296,7 @@ function renderSettingsPanel() {
     return;
   }
 
+  settings = cloneSettingsDefaults();
   panel.innerHTML = "";
 
   const form = document.createElement("form");

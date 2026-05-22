@@ -15,7 +15,7 @@ export function Settings(seed="seed") {
       threshold: C.PRUNE_THRESHOLD,
     },
     coast: {
-      seaBorders: ["WEST","SOUTH","NORTH","EAST"],
+      seaBorders: ["WEST"],
       threshold: 0.28,
       largeScale: 900,
       mediumScale: 350,
