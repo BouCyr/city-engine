@@ -29,7 +29,7 @@ export const steps = [
     process:LLOYD.relax,
     description: (settings, stepMap) => [
       `Lloyd relaxation relocates each city anchor to the center of its current cell, smoothing the diagram and making cell areas more regular and balanced.`,
-      `It computes a centroid for each existing cell, replaces each original point, and then rebuilds a fresh Voronoi pass from those new points so the map is rebalanced without changing map size or bounds (${settings.size} by <em>${settings.size}</em>).`,
+      `It computes a centroid for each existing cell, replaces each original point, and then rebuilds a fresh Voronoi pass from those new points so the map is rebalanced without changing map size or bounds (<em>${settings.size}</em> by <em>${settings.size}</em>).`,
       `The operation is deterministic: the same seed and map state always produce the same relaxed layout.`,
     ],
   },
