@@ -298,6 +298,9 @@ function renderSettingsPanel() {
 
   settings = cloneSettingsDefaults();
   panel.innerHTML = "";
+  const title = createElement("h2", "settings-title");
+  title.textContent = "Settings";
+  panel.appendChild(title);
 
   const form = document.createElement("form");
   form.id = "settings-form";

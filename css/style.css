@@ -140,6 +140,10 @@ li:hover::marker {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s ease;
+
+  margin-left: 0.7rem;
+  border-left: 1px solid var(--mute);
+  padding-left: 0.7rem;
 }
 
 .container.settings-open .settings {
