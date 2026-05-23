@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Title</title>
+  <style>
+    svg {
+      border: 1px solid black;
+    }
+  </style>
+</head>
+<body>
+
+<figure>
+  <svg id="clip" width="100" height="100" viewBox="0 0 200 200">
+
+    <clipPath id="cellClip">
+      <polygon points="100,20 180,80 150,160 60,140 40,60" />
+    </clipPath>
+
+    <polygon
+      points="100,20 180,80 150,160 60,140 40,60"
+      fill="orange" />
+
+    <polygon
+      points="100,20 180,80 150,160 60,140 40,60"
+      fill="none"
+      stroke="black"
+      stroke-width="30"
+      stroke-linejoin="round"
+      stroke-linecap="round"
+      clip-path="url(#cellClip)" />
+  </svg>
+  <figcaption>A clipPath example</figcaption>
+</figure>
+
+<figure>
+  <svg id="clip" width="100" height="100" viewBox="0 0 200 200">
+
+<defs>
+  <filter id="innerBorder"
+          x="-20%" y="-20%"
+          width="140%" height="140%">
+
+    <!-- inset -->
+    <feMorphology
+      in="SourceAlpha"
+      operator="erode"
+      radius="10"
+      result="inner"/>
+
+    <!-- ring -->
+    <feComposite
+      in="SourceAlpha"
+      in2="inner"
+      operator="out"
+      result="ring"/>
+
+    <!-- soften -->
+    <feGaussianBlur
+      in="ring"
+      stdDeviation="6"
+      result="softRing"/>
+
+    <!-- threshold back -->
+    <feColorMatrix
+      in="softRing"
+      type="matrix"
+      values="
+        1 0 0 0 0
+        0 1 0 0 0
+        0 0 1 0 0
+        0 0 0 30 -5"
+      result="finalRing"/>
+
+    <!-- color -->
+    <feFlood flood-color="#0005"/>
+
+    <feComposite operator="in" in2="finalRing"/>
+    <feComposite operator="in" in2="SourceAlpha" />
+
+
+    <feMerge>
+      <feMergeNode in="SourceGraphic"/>
+      <feMergeNode/>
+    </feMerge>
+  </filter>
+</defs>
+
+    <polygon
+      filter="url(#innerBorder)"
+      points="100,20 180,80 150,160 60,140 40,60"
+      fill="orange" />
+
+
+  </svg>
+  <figcaption>A filter example</figcaption>
+</figure>
+</body>
+</html>
