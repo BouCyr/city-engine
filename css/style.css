@@ -76,8 +76,11 @@ li:hover::marker {
   outline-offset: 2px;
 }
 
-.selected-step .step-first-letter {
+.selected-step {
   color: var(--accent-color);
+}
+.selected-step::marker {
+    color: var(--accent-color);
 }
 
 

@@ -3,19 +3,18 @@
 1. Numbers in detail (time, nb cells, edges, etc.)
 2. Rework settings opening
 3. Collapsable settings groups
-4. Rework selected step (full accent)
-5. Area computation
-6. UI interaction
-7. Explanation/replay step
-8. Form style
-9. Scrollbar style
+4. Area computation
+5. UI interaction
+6. Explanation/replay step
+7. Form style
+8. Scrollbar style
 ## Macro
 1. Coastline
    1. prevent boundary cells to be sea if not near corner ?
    2. prevent boundary cells to be sea if on land boundary?
    3. remove inner seas
-   2. add directed noise ?
-   3. replace sea cells by macro-cell ?
+   4. add directed noise ?
+   5. replace sea cells by macro-cell ?
 2. Rivers
    1. Distance to sea computation for each cell
    2. Find mouth, compute uphill ?
