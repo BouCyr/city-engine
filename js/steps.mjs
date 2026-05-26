@@ -8,10 +8,16 @@ export const steps = [
 
   {title:"Scatter",
     process: SCATTER.scatterPoints,
+    createReplay: SCATTER.createReplay,
     description: (settings, stepMap) => [
       `The first generation step creates the initial city anchors, called <em>points of interest</em>, by sampling random coordinates in the map.`,
       `Using the step seed stream, it places <em>${settings.scatter.nb}</em> points so every run stays deterministic.`,
       `Each point is constrained to stay inside the map bounds, between <em>${settings.scatter.safeZone}</em> and <em>${settings.size - settings.scatter.safeZone}</em> on both X and Y axes, which leaves a free border margin of <em>${settings.scatter.safeZone}</em> around the map.`,
+    ],
+    explanation: (settings, stepResult) => [
+      `Scatter is the point-seeding step. It creates the initial POI nodes that later steps convert into cells and edges.`,
+      `The replay starts with the incoming map, then adds one POI per frame. Each point uses the Scatter-specific RNG stream derived from <em>${settings.seed}</em> and the step name, so replay and generation stay in lockstep.`,
+      `For these settings, the sampled coordinates stay within <em>${settings.scatter.safeZone}</em> and <em>${settings.size - settings.scatter.safeZone}</em> on both axes, producing <em>${stepResult?.map?.nodes?.length ?? settings.scatter.nb}</em> POIs in the final frame.`,
     ],
 
   },

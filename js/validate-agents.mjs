@@ -6,6 +6,7 @@ import {Map} from "./data/map.mjs";
 import {Node, Poi} from "./data/nodes.mjs";
 import {Settings} from "./data/settings.mjs";
 import {runPipeline} from "./pipeline.mjs";
+import {createReplay as createScatterReplay, scatterPoints} from "./steps/000-scatter.mjs";
 import {cells} from "./steps/001-gather.mjs";
 import {relax} from "./steps/002-lloyd.mjs";
 import {prune} from "./steps/003-prune.mjs";
@@ -97,6 +98,63 @@ function validatePipelineClonesBeforeSteps() {
   assert.equal(typeof stepResults[1].metrics.durationMs, "number");
   assert.ok(stepResults[1].metrics.durationMs >= 0);
   assert.equal(map.nodes.length, 1);
+}
+
+function validatePipelineStoresReplayWithoutMutatingPriorMaps() {
+  const settings = new Settings("pipeline-replay");
+  settings.scatter.nb = 2;
+  const initialMap = new Map(settings);
+  const pipeline = [{
+    title: "Replay",
+    createReplay(stepSettings, inputMap) {
+      const firstFrame = cloneDeepKeepFunctions(inputMap);
+      inputMap.nodes.push(Poi("replay-only", 1, 1));
+      const secondFrame = cloneDeepKeepFunctions(inputMap);
+      return {
+        frames: [
+          {label: "Before", map: firstFrame},
+          {label: "After", map: secondFrame},
+        ],
+      };
+    },
+    process(stepSettings, map) {
+      map.nodes.push(Poi("processed", 10, 20));
+      return map;
+    },
+  }];
+
+  const {stepResults} = runPipeline(settings, initialMap, pipeline);
+
+  assert.equal(initialMap.nodes.length, 0);
+  assert.equal(stepResults[0].map.nodes.length, 0);
+  assert.equal(stepResults[1].map.nodes.length, 1);
+  assert.equal(stepResults[1].replay.frames.length, 2);
+  assert.equal(stepResults[1].replay.frames[0].map.nodes.length, 0);
+  assert.equal(stepResults[1].replay.frames[1].map.nodes.length, 1);
+}
+
+function validateScatterReplay() {
+  const settings = new Settings("scatter-replay");
+  settings.scatter.nb = 4;
+  const inputMap = new Map(settings);
+  const replay = createScatterReplay({
+    ...settings,
+    rng: settings.createStepRng("Scatter"),
+  }, inputMap);
+  const processed = scatterPoints({
+    ...settings,
+    rng: settings.createStepRng("Scatter"),
+  }, inputMap);
+  const finalReplayMap = replay.frames.at(-1).map;
+
+  assert.equal(replay.frames.length, settings.scatter.nb + 1);
+  assert.equal(replay.frames[0].map.nodes.length, 0);
+  assert.equal(replay.frames[1].map.nodes.length, 1);
+  assert.equal(finalReplayMap.nodes.length, processed.nodes.length);
+  assert.deepEqual(
+    finalReplayMap.nodes.map((node) => [node.id, node.x, node.y]),
+    processed.nodes.map((node) => [node.id, node.x, node.y]),
+  );
 }
 
 function validateStepRngDeterminism() {
@@ -388,6 +446,8 @@ function validateSeaLandStepClassifiesAndTags() {
 validateCloneIdentityAndFlags();
 validateSnapshotDrawingUsesClonedNodes();
 validatePipelineClonesBeforeSteps();
+validatePipelineStoresReplayWithoutMutatingPriorMaps();
+validateScatterReplay();
 validateStepRngDeterminism();
 validateGatherVoronoi();
 validateCellDrawing();

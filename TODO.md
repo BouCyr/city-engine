@@ -1,6 +1,5 @@
 # TODO
 ## UI
-1. Numbers in detail (time, nb cells, edges, etc.)
 2. Rework settings opening
 3. Collapsable settings groups
 4. Area computation

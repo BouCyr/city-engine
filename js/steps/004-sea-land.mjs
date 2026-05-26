@@ -67,7 +67,7 @@ function normalizeSettings(coastSettings) {
     sampleCount: Math.max(0, Math.floor(toNumber(safeCoastSettings.sampleCount, DEFAULT_COAST.sampleCount))),
     smoothingPasses: Math.max(0, Math.floor(toNumber(safeCoastSettings.smoothingPasses, DEFAULT_COAST.smoothingPasses))),
     smoothingBias: Math.max(0, Math.min(1, toNumber(safeCoastSettings.smoothingBias, DEFAULT_COAST.smoothingBias))),
-    artifactsMax: Math.max(1, Math.floor(toNumber(safeCoastSettings.artifactsMax, DEFAULT_COAST.artifactsMax))),
+    artifactsMax: Math.max(0, Math.floor(toNumber(safeCoastSettings.artifactsMax, DEFAULT_COAST.artifactsMax))),
     extraNoise: (safeCoastSettings.extraNoise || []).map((layer) => ({
       scale: toNumberArray(layer?.scale, DEFAULT_COAST.smallScale),
       amplitude: toNumber(layer?.amplitude, 0),
@@ -198,6 +198,10 @@ function neighborTerrain(cell, edge, seaBorders, size) {
 }
 
 function classifyEdgeTerrain(edge, seaBorders, size) {
+  if (!edge.leftCell || !edge.rightCell) {
+    return edge.leftCell?.type || edge.rightCell?.type || inferMissingCellTerrain(edge, seaBorders, size);
+  }
+
   const leftTerrain = edge.leftCell?.type || inferMissingCellTerrain(edge, seaBorders, size);
   const rightTerrain = edge.rightCell?.type || inferMissingCellTerrain(edge, seaBorders, size);
 
@@ -217,6 +221,10 @@ function touchesSeaBorder(cell, seaBorders, size) {
 }
 
 function removeTinyArtifacts(map, seaBorders, maxSize) {
+  if (maxSize <= 0) {
+    return;
+  }
+
   const componentMax = Math.max(1, maxSize);
   const visited = new Set();
 
