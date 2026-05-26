@@ -187,7 +187,8 @@ function createMetricsDetails(metrics) {
     ["Cells", "cells"],
     ["Areas", "areas"],
   ].forEach(([label, key]) => {
-    tbody.appendChild(createEntityMetricRow(label, metrics.before?.[key], metrics.after?.[key]));
+    createEntityMetricRows(label, metrics.before?.[key], metrics.after?.[key])
+      .forEach((row) => tbody.appendChild(row));
   });
 
   tbody.appendChild(createDurationMetricRow(metrics.durationMs));
@@ -195,28 +196,53 @@ function createMetricsDetails(metrics) {
   return wrapper;
 }
 
-function createEntityMetricRow(label, before = emptyEntityMetrics(), after = emptyEntityMetrics()) {
+function createEntityMetricRows(label, before = emptyEntityMetrics(), after = emptyEntityMetrics()) {
   const row = document.createElement("tr");
   const labelCell = document.createElement("td");
   const beforeCell = document.createElement("td");
   const afterCell = document.createElement("td");
   const typeNames = sortedTypeNames(before, after);
 
-  if (typeNames.length > 0) {
-    const typeDetails = document.createElement("details");
-    const typeSummary = document.createElement("summary");
-    typeDetails.className = "metric-breakdown";
-    typeSummary.textContent = label;
-    typeDetails.append(typeSummary, createTypeBreakdownTable(typeNames, before, after));
-    labelCell.appendChild(typeDetails);
-  } else {
-    labelCell.textContent = label;
-  }
-
   beforeCell.textContent = formatCount(before.count);
   afterCell.textContent = formatCount(after.count);
+
+  if (typeNames.length > 0) {
+    const breakdownRow = document.createElement("tr");
+    const breakdownCell = document.createElement("td");
+    const toggle = document.createElement("button");
+    const labelText = document.createElement("span");
+    const breakdownId = `metric-breakdown-${label.toLowerCase()}`;
+
+    breakdownRow.className = "metric-breakdown-row";
+    breakdownRow.id = breakdownId;
+    breakdownRow.hidden = true;
+    breakdownCell.colSpan = 3;
+
+    toggle.type = "button";
+    toggle.className = "metric-breakdown-toggle";
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-controls", breakdownId);
+    toggle.textContent = ">";
+    toggle.addEventListener("click", () => {
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      toggle.setAttribute("aria-expanded", String(!expanded));
+      breakdownRow.hidden = expanded;
+      toggle.textContent = expanded ? ">" : "v";
+    });
+
+    labelText.textContent = label;
+    labelCell.className = "metric-label-with-toggle";
+    labelCell.append(toggle, labelText);
+    row.append(labelCell, beforeCell, afterCell);
+
+    breakdownCell.appendChild(createTypeBreakdownTable(typeNames, before, after));
+    breakdownRow.appendChild(breakdownCell);
+    return [row, breakdownRow];
+  }
+
+  labelCell.textContent = label;
   row.append(labelCell, beforeCell, afterCell);
-  return row;
+  return [row];
 }
 
 function createDurationMetricRow(durationMs) {

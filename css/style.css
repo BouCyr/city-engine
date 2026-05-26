@@ -345,12 +345,37 @@ li:hover::marker {
   white-space: nowrap;
 }
 
-.metric-breakdown > summary {
+.metric-label-with-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.metric-breakdown-toggle {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 0;
+  padding: 0;
+  color: var(--text-color);
+  background: transparent;
+  font: inherit;
+  line-height: 1;
   cursor: pointer;
 }
 
+.metric-breakdown-toggle:focus-visible {
+  outline: 1px solid var(--accent-color);
+  outline-offset: 1px;
+}
+
+.metric-breakdown-row > td {
+  background: color-mix(in srgb, var(--mute) 8%, transparent);
+}
+
 .metric-breakdown-table {
-  margin-top: 0.35rem;
   font-size: 0.78rem;
 }
 
