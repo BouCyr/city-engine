@@ -1,0 +1,54 @@
+.steps {
+  grid-area: 2 / 1 / 3 / 2;
+}
+
+.steps-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  margin-bottom: 0.5rem;
+}
+
+#settings-toggle {
+  appearance: none;
+  border: 0;
+  color: var(--accent-color);
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+#settings-toggle:focus-visible {
+  outline: 1px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+li::marker {
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+li:hover::marker {
+  color: var(--accent-color);
+}
+
+.step-item {
+  cursor: pointer;
+}
+
+.step-item:focus-visible {
+  outline: 1px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.selected-step {
+  color: var(--accent-color);
+}
+
+.selected-step::marker {
+  color: var(--accent-color);
+}

@@ -1,0 +1,45 @@
+.map {
+  grid-area: 2 / 3 / 3 / 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  min-width: 0;
+}
+
+#map_svg {
+  aspect-ratio: 1/1;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+}
+
+.cell {
+  fill: rgba(200, 100, 200, 0.5);
+}
+
+.terrain-sea {
+  fill: var(--sea-fill);
+}
+
+.terrain-land {
+  fill: var(--land-fill);
+}
+
+.edge {
+  fill: none;
+  stroke-width: var(--edge-stroke-width);
+}
+
+.edge.terrain-sea {
+  stroke: var(--sea-edge);
+}
+
+.edge.terrain-land {
+  stroke: var(--land-edge);
+}
+
+.edge.terrain-coast {
+  stroke: var(--coast-edge);
+}

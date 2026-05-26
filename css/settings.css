@@ -1,0 +1,123 @@
+.settings {
+  grid-area: 2 / 2 / 3 / 3;
+  overflow: auto;
+  width: var(--settings-column-width);
+  max-width: var(--settings-column-width);
+  min-width: 0;
+  box-sizing: border-box;
+  padding-right: 0.25rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+
+  margin-left: 0.7rem;
+  border-left: 1px solid var(--mute);
+  padding-left: 0.7rem;
+}
+
+.container.settings-open .settings {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.setting-group {
+  margin-bottom: 1rem;
+}
+
+.setting-group h3 {
+  font-size: 1rem;
+  margin: 0 0 0.45rem 0;
+}
+
+.setting-item {
+  margin-bottom: 0.7rem;
+  margin-left: 1.4rem;
+}
+
+.setting-item label {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.setting-item input[type="text"],
+.setting-item input[type="number"],
+.setting-item textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  border: 1px solid var(--mute);
+  background: transparent;
+  color: var(--text-color);
+  border-radius: 8px;
+  padding: 0.22rem 0.4rem;
+}
+
+.setting-item textarea {
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+}
+
+.setting-item .setting-invalid {
+  border-color: #d33;
+}
+
+.setting-control-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.setting-control-row input[type="range"] {
+  width: 100%;
+  cursor: pointer;
+}
+
+.setting-range-value {
+  font-size: 0.87rem;
+  opacity: 0.8;
+  min-width: 3.5rem;
+  text-align: right;
+}
+
+.setting-help {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.setting-help .setting-reset {
+  font: inherit;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.setting-help .setting-reset:hover {
+  opacity: 1;
+  color: var(--accent-color);
+}
+
+.setting-help .setting-reset:focus-visible {
+  opacity: 1;
+  color: var(--accent-color);
+}
+
+.setting-checkbox-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 0.7rem;
+}
+
+.setting-checkbox-list label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+}
