@@ -89,6 +89,13 @@ function validatePipelineClonesBeforeSteps() {
   assert.equal(initialMap.nodes.length, 0);
   assert.equal(stepResults[0].map.nodes.length, 0);
   assert.equal(stepResults[1].map.nodes.length, 1);
+  assert.equal(stepResults[1].metrics.before.nodes.count, 0);
+  assert.equal(stepResults[1].metrics.after.nodes.count, 1);
+  assert.equal(stepResults[1].metrics.after.nodes.types.POI, 1);
+  assert.equal(stepResults[1].metrics.before.cells.count, 0);
+  assert.equal(stepResults[1].metrics.after.areas.count, 0);
+  assert.equal(typeof stepResults[1].metrics.durationMs, "number");
+  assert.ok(stepResults[1].metrics.durationMs >= 0);
   assert.equal(map.nodes.length, 1);
 }
 

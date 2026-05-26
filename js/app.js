@@ -28,10 +28,7 @@ function renderCurrentMap() {
   svgDomElt.setAttribute("viewBox", `0 0 ${settings.size} ${settings.size}`);
   displayMap.clear(svgDomElt);
   displayMap.draw(svgDomElt);
-
-  if (hoveredStepIndex !== null) {
-    renderStepDetails(steps[index], result);
-  }
+  renderStepDetails(steps[index], result);
 }
 
 function regenerate(nextSettings = settingsPanel?.readSettings?.() ?? settings) {
@@ -52,7 +49,6 @@ function scheduleRegeneration(nextSettings) {
 
 function initStepsUI() {
   const list = document.getElementById("steps-list");
-  const details = document.getElementById("details");
   if (!list) {
     return;
   }
@@ -101,7 +97,6 @@ function initStepsUI() {
   list.addEventListener("mouseleave", () => {
     hoveredStepIndex = null;
     renderCurrentMap();
-    clearDetails(details);
   });
 
   updateSelectedStep();
@@ -144,24 +139,18 @@ function renderStepDetails(step, result) {
   heading.textContent = `${step.title} Step`;
   details.appendChild(heading);
 
-  if (!step.description) {
-    return;
+  if (step.description) {
+    const paragraphs = step.description(settings, result?.map);
+    paragraphs.forEach((paragraph) => {
+      const p = document.createElement("p");
+      p.innerHTML = paragraph;
+      details.appendChild(p);
+    });
   }
 
-  const paragraphs = step.description(settings, result?.map);
-  paragraphs.forEach((paragraph) => {
-    const p = document.createElement("p");
-    p.innerHTML = paragraph;
-    details.appendChild(p);
-  });
-}
-
-function clearDetails(details) {
-  if (!details) {
-    return;
+  if (result?.metrics) {
+    details.appendChild(createMetricsDetails(result.metrics));
   }
-
-  details.innerHTML = "<p>Hover a step to inspect what changed and the settings used.</p>";
 }
 
 svgDomElt = document.getElementById("map_svg");
@@ -169,4 +158,131 @@ settingsPanel = initSettingsPanel(document.getElementById("settings-panel"), sch
 initStepsUI();
 initSettingsToggle();
 regenerate(settings);
-clearDetails(document.getElementById("details"));
+
+function createMetricsDetails(metrics) {
+  const wrapper = document.createElement("details");
+  const summary = document.createElement("summary");
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const tbody = document.createElement("tbody");
+  const headerRow = document.createElement("tr");
+
+  wrapper.className = "metrics-section";
+  wrapper.open = true;
+  summary.textContent = "Metrics";
+  wrapper.appendChild(summary);
+
+  ["Metric", "Before", "After"].forEach((label) => {
+    const th = document.createElement("th");
+    th.scope = "col";
+    th.textContent = label;
+    headerRow.appendChild(th);
+  });
+
+  thead.appendChild(headerRow);
+  table.append(thead, tbody);
+
+  [
+    ["Nodes", "nodes"],
+    ["Cells", "cells"],
+    ["Areas", "areas"],
+  ].forEach(([label, key]) => {
+    tbody.appendChild(createEntityMetricRow(label, metrics.before?.[key], metrics.after?.[key]));
+  });
+
+  tbody.appendChild(createDurationMetricRow(metrics.durationMs));
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+function createEntityMetricRow(label, before = emptyEntityMetrics(), after = emptyEntityMetrics()) {
+  const row = document.createElement("tr");
+  const labelCell = document.createElement("td");
+  const beforeCell = document.createElement("td");
+  const afterCell = document.createElement("td");
+  const typeNames = sortedTypeNames(before, after);
+
+  if (typeNames.length > 0) {
+    const typeDetails = document.createElement("details");
+    const typeSummary = document.createElement("summary");
+    typeDetails.className = "metric-breakdown";
+    typeSummary.textContent = label;
+    typeDetails.append(typeSummary, createTypeBreakdownTable(typeNames, before, after));
+    labelCell.appendChild(typeDetails);
+  } else {
+    labelCell.textContent = label;
+  }
+
+  beforeCell.textContent = formatCount(before.count);
+  afterCell.textContent = formatCount(after.count);
+  row.append(labelCell, beforeCell, afterCell);
+  return row;
+}
+
+function createDurationMetricRow(durationMs) {
+  const row = document.createElement("tr");
+  const labelCell = document.createElement("td");
+  const valueCell = document.createElement("td");
+
+  labelCell.textContent = "Step duration";
+  valueCell.colSpan = 2;
+  valueCell.textContent = `${formatDuration(durationMs)} ms`;
+  row.append(labelCell, valueCell);
+  return row;
+}
+
+function createTypeBreakdownTable(typeNames, before, after) {
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const tbody = document.createElement("tbody");
+  const headerRow = document.createElement("tr");
+
+  table.className = "metric-breakdown-table";
+  ["Type", "Before", "After"].forEach((label) => {
+    const th = document.createElement("th");
+    th.scope = "col";
+    th.textContent = label;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+
+  typeNames.forEach((typeName) => {
+    const row = document.createElement("tr");
+    [typeName, formatCount(before.types?.[typeName] ?? 0), formatCount(after.types?.[typeName] ?? 0)]
+      .forEach((value) => {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        row.appendChild(cell);
+      });
+    tbody.appendChild(row);
+  });
+
+  table.append(thead, tbody);
+  return table;
+}
+
+function sortedTypeNames(before, after) {
+  return Array.from(new Set([
+    ...Object.keys(before?.types ?? {}),
+    ...Object.keys(after?.types ?? {}),
+  ])).sort((left, right) => left.localeCompare(right));
+}
+
+function emptyEntityMetrics() {
+  return {
+    count: 0,
+    types: {},
+  };
+}
+
+function formatCount(value) {
+  return String(value ?? 0);
+}
+
+function formatDuration(value) {
+  if (!Number.isFinite(value)) {
+    return "0.0";
+  }
+
+  return value.toFixed(1);
+}

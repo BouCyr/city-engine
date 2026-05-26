@@ -310,6 +310,50 @@ li:hover::marker {
   letter-spacing: -0.01em;
 }
 
+.metrics-section {
+  margin-top: 1rem;
+  font-size: 0.85rem;
+}
+
+.metrics-section > summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 0.45rem;
+}
+
+.metrics-section table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.metrics-section th,
+.metrics-section td {
+  border: 1px solid color-mix(in srgb, var(--mute) 65%, transparent);
+  padding: 0.28rem 0.35rem;
+  vertical-align: top;
+}
+
+.metrics-section th {
+  text-align: left;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text-color) 82%, transparent);
+}
+
+.metrics-section td:not(:first-child),
+.metrics-section th:not(:first-child) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.metric-breakdown > summary {
+  cursor: pointer;
+}
+
+.metric-breakdown-table {
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+}
+
 .foot { grid-area: 3 / 1 / 4 / 5; }
 
 
