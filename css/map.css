@@ -1,3 +1,8 @@
+:root {
+  --area-inner-border-sea: rgb(255 255 255 / 0.25);
+  --area-inner-border-land: #cbb18a;
+}
+
 .map {
   grid-area: 2 / 3 / 3 / 4;
   display: flex;
@@ -95,4 +100,12 @@
   stroke: rgba(22, 42, 54, 0.8);
   stroke-width: 1.2;
   pointer-events: none;
+}
+
+#area-inner-border-sea-flood {
+  flood-color: var(--area-inner-border-sea);
+}
+
+#area-inner-border-land-flood {
+  flood-color: var(--area-inner-border-land);
 }

@@ -65,39 +65,6 @@
   </aside>
   <div class="map">
       <svg id="map_svg" viewBox="0 0 3000 3000">
-        <g id="grid">
-          <path id="grid-h" d="
-          M0 0  H3005
-          v250 H -5
-          v250 H3005
-          v250 H -5
-          v250 H3005
-          v250 H -5
-          v250 H3005
-          v250 H -5
-          v250 H3005
-          v250 H -5
-          v250 H3005
-          v250 H -5
-          v250 H3005
-          "
-
-                fill="none"
-                stroke="var(--mute)" />
-          <path id="grid-v" d="
-          M0 0
-          V 3005 h 250 V-5 h 250
-          V 3005 h 250 V-5 h 250
-          V 3005 h 250 V-5 h 250
-          V 3005 h 250 V-5 h 250
-          V 3005 h 250 V-5 h 250
-          V 3005 h 250 V-5 H3000
-          V3005
-          "
-                fill="none"
-                stroke="var(--mute)" />
-
-        </g>
         <g id="areas"></g>
         <g id="cells"></g>
         <g id="edges"></g>
@@ -123,6 +90,44 @@
 
 <svg width="0" height="0">
   <defs>
+    <filter id="area-inner-border-sea"
+            x="-20%" y="-20%"
+            width="140%" height="140%">
+      <feMorphology in="SourceAlpha" operator="erode" radius="16" result="inner"/>
+      <feComposite in="SourceAlpha" in2="inner" operator="out" result="ring"/>
+      <feGaussianBlur in="ring" stdDeviation="2.2" result="softRing"/>
+      <feColorMatrix in="softRing" type="matrix" values="
+        1 0 0 0 0
+        0 1 0 0 0
+        0 0 1 0 0
+        0 0 0 24 -4" result="finalRing"/>
+      <feFlood id="area-inner-border-sea-flood"/>
+      <feComposite operator="in" in2="finalRing"/>
+      <feComposite operator="in" in2="SourceAlpha"/>
+      <feMerge>
+        <feMergeNode in="SourceGraphic"/>
+        <feMergeNode/>
+      </feMerge>
+    </filter>
+    <filter id="area-inner-border-land"
+            x="-20%" y="-20%"
+            width="140%" height="140%">
+      <feMorphology in="SourceAlpha" operator="erode" radius="16" result="inner"/>
+      <feComposite in="SourceAlpha" in2="inner" operator="out" result="ring"/>
+      <feGaussianBlur in="ring" stdDeviation="2.2" result="softRing"/>
+      <feColorMatrix in="softRing" type="matrix" values="
+        1 0 0 0 0
+        0 1 0 0 0
+        0 0 1 0 0
+        0 0 0 24 -4" result="finalRing"/>
+      <feFlood id="area-inner-border-land-flood"/>
+      <feComposite operator="in" in2="finalRing"/>
+      <feComposite operator="in" in2="SourceAlpha"/>
+      <feMerge>
+        <feMergeNode in="SourceGraphic"/>
+        <feMergeNode/>
+      </feMerge>
+    </filter>
   </defs>
 </svg>
 </body>

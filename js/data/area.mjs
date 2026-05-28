@@ -27,6 +27,10 @@ export function drawArea(svg, groupElement = null) {
   path.setAttribute("d", pathData);
   path.setAttribute("class", `area terrain-${terrainClass(this.type)}`);
   path.setAttribute("fill-rule", "evenodd");
+  const filterId = areaInnerBorderFilterId(this.type);
+  if (filterId) {
+    path.setAttribute("filter", `url(#${filterId})`);
+  }
   layer.appendChild(path);
 }
 
@@ -96,6 +100,12 @@ function segmentsToPath(segments) {
 
 function terrainClass(type) {
   return type === "SEA" ? "sea" : "land";
+}
+
+function areaInnerBorderFilterId(type) {
+  if (type === "SEA") return "area-inner-border-sea";
+  if (type === "LAND") return "area-inner-border-land";
+  return null;
 }
 
 function pointKey(point) {
