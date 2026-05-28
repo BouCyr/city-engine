@@ -1,4 +1,5 @@
 import {Cell} from "../data/cell.mjs";
+import {cloneDeepKeepFunctions} from "../data/clone.mjs";
 import {Edge} from "../data/edge.mjs";
 import {Map as CityMap} from "../data/map.mjs";
 import {Node} from "../data/nodes.mjs";
@@ -6,17 +7,47 @@ import {Node} from "../data/nodes.mjs";
 const EPSILON = 1e-7;
 const KEY_PRECISION = 1000000;
 const BOUNDARY = "Boundary";
+const OVERLAY_COMPETITOR_LIMIT = 6;
 
 export function cells(settings, map) {
+  return buildGather(settings, map).map;
+}
+
+export function createReplay(settings, inputMap) {
+  const frames = [{
+    label: "Before gather",
+    text: "Gather starts from the Scatter POIs before any Voronoi cells are built.",
+    map: cloneDeepKeepFunctions(inputMap),
+  }];
+
+  buildGather(settings, inputMap, (result, cellInfo) => {
+    const frameMap = cloneDeepKeepFunctions(result);
+    frameMap.drawOverlay = createGatherOverlayDraw({
+      size: settings.size,
+      site: cellInfo.site,
+      sites: cellInfo.sites,
+      polygon: cellInfo.polygon,
+    });
+
+    frames.push({
+      label: `Cell ${cellInfo.cellNumber} / ${cellInfo.cellCount}`,
+      text: `Cell ${cellInfo.cellNumber} is clipped to the half-planes where its POI stays closer than nearby competing POIs.`,
+      map: frameMap,
+    });
+  });
+
+  return {frames};
+}
+
+function buildGather(settings, map, afterCell) {
   const sites = map.nodes.filter(node => node.type === "POI");
+  const siteCells = buildSiteCells(sites, settings.size);
   const result = new CityMap(settings);
   const nodeIndex = new Map();
   const edgeIndex = new Map();
 
-  sites.forEach((site, siteIndex) => {
-    const polygon = buildVoronoiPolygon(site, sites, settings.size);
-    if (polygon.length < 3) return;
-
+  siteCells.forEach((siteCell, cellIndex) => {
+    const {site, siteIndex, polygon} = siteCell;
     const cellEdges = [];
     const cell = Cell(`Cell${siteIndex}`, cellEdges);
 
@@ -33,9 +64,26 @@ export function cells(settings, map) {
     }
 
     result.cells.push(cell);
+    afterCell?.(result, {
+      ...siteCell,
+      cell,
+      cellNumber: cellIndex + 1,
+      cellCount: siteCells.length,
+      sites,
+    });
   });
 
-  return result;
+  return {map: result, siteCells};
+}
+
+function buildSiteCells(sites, size) {
+  return sites
+    .map((site, siteIndex) => ({
+      site,
+      siteIndex,
+      polygon: buildVoronoiPolygon(site, sites, size),
+    }))
+    .filter(siteCell => siteCell.polygon.length >= 3);
 }
 
 function buildVoronoiPolygon(site, sites, size) {
@@ -194,4 +242,94 @@ function clamp(value, size) {
   if (near(value, 0)) return 0;
   if (near(value, size)) return size;
   return value;
+}
+
+function createGatherOverlayDraw({size, site, sites, polygon}) {
+  const competitors = nearestCompetitors(site, sites, OVERLAY_COMPETITOR_LIMIT);
+
+  return function drawGatherOverlay(svg) {
+    const layer = svg.getElementById("overlay");
+    if (!layer) return;
+
+    appendPolygon(layer, polygon, "gather-overlay-polygon");
+
+    for (const competitor of competitors) {
+      appendLine(layer, site, competitor, "gather-overlay-link");
+      const segment = bisectorSegment(site, competitor, size);
+      if (segment) appendLine(layer, segment.start, segment.end, "gather-overlay-bisector");
+      appendCircle(layer, competitor, 9, "gather-overlay-competitor");
+    }
+
+    appendCircle(layer, site, 14, "gather-overlay-active-site");
+  };
+}
+
+function nearestCompetitors(site, sites, limit) {
+  return sites
+    .filter(other => other !== site)
+    .map(other => ({site: other, distance: distanceSquared(site, other)}))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, limit)
+    .map(item => item.site);
+}
+
+function bisectorSegment(site, other, size) {
+  const a = 2 * (other.x - site.x);
+  const b = 2 * (other.y - site.y);
+  const c = site.x * site.x + site.y * site.y - other.x * other.x - other.y * other.y;
+  const points = [];
+
+  if (Math.abs(b) > EPSILON) {
+    addUniquePoint(points, {x: 0, y: -c / b}, size);
+    addUniquePoint(points, {x: size, y: -(a * size + c) / b}, size);
+  }
+
+  if (Math.abs(a) > EPSILON) {
+    addUniquePoint(points, {x: -c / a, y: 0}, size);
+    addUniquePoint(points, {x: -(b * size + c) / a, y: size}, size);
+  }
+
+  if (points.length < 2) return null;
+  return {start: points[0], end: points[1]};
+}
+
+function addUniquePoint(points, point, size) {
+  if (point.x < -EPSILON || point.x > size + EPSILON || point.y < -EPSILON || point.y > size + EPSILON) {
+    return;
+  }
+
+  const clamped = {
+    x: clamp(point.x, size),
+    y: clamp(point.y, size),
+  };
+
+  if (!points.some(existing => samePoint(existing, clamped))) {
+    points.push(clamped);
+  }
+}
+
+function appendPolygon(layer, polygon, className) {
+  const element = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+  element.setAttribute("class", className);
+  element.setAttribute("points", polygon.map(point => `${point.x},${point.y}`).join(" "));
+  layer.appendChild(element);
+}
+
+function appendLine(layer, start, end, className) {
+  const element = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  element.setAttribute("class", className);
+  element.setAttribute("x1", start.x);
+  element.setAttribute("y1", start.y);
+  element.setAttribute("x2", end.x);
+  element.setAttribute("y2", end.y);
+  layer.appendChild(element);
+}
+
+function appendCircle(layer, point, radius, className) {
+  const element = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  element.setAttribute("class", className);
+  element.setAttribute("cx", point.x);
+  element.setAttribute("cy", point.y);
+  element.setAttribute("r", radius);
+  layer.appendChild(element);
 }

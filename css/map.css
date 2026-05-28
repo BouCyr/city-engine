@@ -43,3 +43,52 @@
 .edge.terrain-coast {
   stroke: var(--coast-edge);
 }
+
+.gather-overlay-polygon {
+  fill: rgba(255, 196, 87, 0.18);
+  stroke: #ffb000;
+  stroke-width: 7;
+  stroke-linejoin: round;
+}
+
+.gather-overlay-link {
+  stroke: rgba(40, 80, 120, 0.42);
+  stroke-width: 4;
+  stroke-dasharray: 18 14;
+}
+
+.gather-overlay-bisector {
+  stroke: rgba(210, 68, 68, 0.72);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+
+.gather-overlay-active-site {
+  fill: #ffb000;
+  stroke: #342400;
+  stroke-width: 5;
+}
+
+.gather-overlay-competitor {
+  fill: #ffffff;
+  stroke: #285078;
+  stroke-width: 4;
+}
+
+.coast-heatmap-cell {
+  stroke: transparent;
+}
+
+.coast-selected-border {
+  stroke: #f4c247;
+  stroke-linecap: square;
+  fill: none;
+  opacity: 0.95;
+}
+
+.coast-sample-point {
+  fill: rgba(255, 255, 255, 0.72);
+  stroke: rgba(22, 42, 54, 0.8);
+  stroke-width: 1.2;
+  pointer-events: none;
+}

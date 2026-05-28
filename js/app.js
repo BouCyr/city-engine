@@ -297,6 +297,7 @@ function renderStepExplanation() {
   panel.appendChild(header);
 
   renderExplanationCopy(panel, step, result);
+  step.renderExplanationExtras?.(panel, settings, result);
 
   if (result?.replay?.frames?.length) {
     panel.appendChild(createReplayControls(result.replay.frames));

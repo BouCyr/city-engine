@@ -7,13 +7,14 @@ import {Node, Poi} from "./data/nodes.mjs";
 import {Settings} from "./data/settings.mjs";
 import {runPipeline} from "./pipeline.mjs";
 import {createReplay as createScatterReplay, scatterPoints} from "./steps/000-scatter.mjs";
-import {cells} from "./steps/001-gather.mjs";
+import {cells, createReplay as createGatherReplay} from "./steps/001-gather.mjs";
 import {relax} from "./steps/002-lloyd.mjs";
 import {prune} from "./steps/003-prune.mjs";
-import {classifySeaLand, TERRAIN_COAST, TERRAIN_LAND, TERRAIN_SEA} from "./steps/004-sea-land.mjs";
+import {classifySeaLand, createReplay as createCoastReplay, TERRAIN_COAST, TERRAIN_LAND, TERRAIN_SEA} from "./steps/004-sea-land.mjs";
 
 function createSvgProbe() {
   const calls = [];
+  const layers = new globalThis.Map();
   globalThis.document = {
     createElementNS(namespace, name) {
       return {
@@ -27,15 +28,28 @@ function createSvgProbe() {
     },
   };
 
+  function getLayer(id) {
+    if (!layers.has(id)) {
+      layers.set(id, {
+        id,
+        innerHTML: "existing",
+        appendChild(element) {
+          calls.push({...element, layerId: id});
+        },
+      });
+    }
+    return layers.get(id);
+  }
+
   return {
     calls,
+    layers,
     svg: {
-      getElementById() {
-        return {
-          appendChild(element) {
-            calls.push(element);
-          },
-        };
+      getElementById(id) {
+        return getLayer(id);
+      },
+      querySelector(selector) {
+        return selector.startsWith("#") ? getLayer(selector.slice(1)) : null;
       },
     },
   };
@@ -206,6 +220,70 @@ function validateGatherVoronoi() {
   assert.ok(result.edges.some(edge => edge.flags.has("Boundary")));
 }
 
+function validateGatherReplay() {
+  const settings = new Settings("gather-replay");
+  const input = new Map(settings);
+  input.nodes.push(
+    Poi("A", 750, 750),
+    Poi("B", 2250, 750),
+    Poi("C", 1500, 2250),
+  );
+
+  const replay = createGatherReplay({
+    ...settings,
+    rng: settings.createStepRng("Gather"),
+  }, input);
+  const processed = cells({
+    ...settings,
+    rng: settings.createStepRng("Gather"),
+  }, input);
+  const finalReplayMap = replay.frames.at(-1).map;
+
+  assert.equal(replay.frames.length, input.nodes.length + 1);
+  assert.equal(replay.frames[0].label, "Before gather");
+  assert.equal(replay.frames[0].map.nodes.length, input.nodes.length);
+  assert.equal(replay.frames[0].map.cells.length, 0);
+  assert.equal(replay.frames[1].map.cells.length, 1);
+  assert.equal(replay.frames[2].map.cells.length, 2);
+  assert.equal(finalReplayMap.cells.length, processed.cells.length);
+  assert.equal(finalReplayMap.nodes.length, processed.nodes.length);
+  assert.equal(finalReplayMap.edges.length, processed.edges.length);
+  assert.deepEqual(
+    finalReplayMap.nodes.map((node) => [node.id, Math.round(node.x * 1000), Math.round(node.y * 1000)]),
+    processed.nodes.map((node) => [node.id, Math.round(node.x * 1000), Math.round(node.y * 1000)]),
+  );
+
+  const frameMap = replay.frames[1].map;
+  const beforeCounts = {
+    nodes: frameMap.nodes.length,
+    edges: frameMap.edges.length,
+    cells: frameMap.cells.length,
+  };
+  const {calls, layers, svg} = createSvgProbe();
+  frameMap.drawOverlay(svg);
+
+  assert.equal(frameMap.nodes.length, beforeCounts.nodes);
+  assert.equal(frameMap.edges.length, beforeCounts.edges);
+  assert.equal(frameMap.cells.length, beforeCounts.cells);
+  assert.ok(calls.length > 0);
+  assert.ok(calls.every(call => call.layerId === "overlay"));
+  assert.equal(layers.get("nodes"), undefined);
+  assert.equal(layers.get("edges"), undefined);
+  assert.equal(layers.get("cells"), undefined);
+}
+
+function validateMapClearClearsOverlay() {
+  const settings = new Settings("clear-overlay");
+  const map = new Map(settings);
+  const {layers, svg} = createSvgProbe();
+  map.clear(svg);
+
+  assert.equal(layers.get("cells").innerHTML, "");
+  assert.equal(layers.get("nodes").innerHTML, "");
+  assert.equal(layers.get("edges").innerHTML, "");
+  assert.equal(layers.get("overlay").innerHTML, "");
+}
+
 function validateCellDrawing() {
   const settings = new Settings("cell-draw-test");
   const input = new Map(settings);
@@ -352,8 +430,8 @@ function validatePruneBoundaryRules() {
   assert.throws(() => prune(oppositeSettings, oppositeMap), /opposite boundaries/);
 }
 
-function validateSeaLandStepClassifiesAndTags() {
-  const settings = new Settings("sea-land-test");
+function createTwoCellCoastFixture(seed = "sea-land-test") {
+  const settings = new Settings(seed);
   settings.coast = {
     ...settings.coast,
     seaBorders: ["WEST"],
@@ -406,8 +484,13 @@ function validateSeaLandStepClassifiesAndTags() {
   splitB.rightCell = cellB;
 
   map.cells.push(cellA, cellB);
-  map.edges.push(eTopA, eRightA, eBottomA, eLeftA, splitA, eTopB, eRightB, eBottomB);
+  map.edges.push(eTopA, eRightA, eBottomA, eLeftA, splitA, eTopB, eRightB, eBottomB, splitB);
 
+  return {settings, map, cellA, cellB};
+}
+
+function validateSeaLandStepClassifiesAndTags() {
+  const {settings, map, cellA, cellB} = createTwoCellCoastFixture();
   const result = classifySeaLand({
     ...settings,
     rng: settings.createStepRng("Sea-Land"),
@@ -443,6 +526,133 @@ function validateSeaLandStepClassifiesAndTags() {
   assert.equal(result.nodes.every((node) => node.draw === null), true);
 }
 
+function validateCoastReplayMatchesFinalClassification() {
+  const {settings, map} = createTwoCellCoastFixture("coast-replay-final");
+  const processed = classifySeaLand({
+    ...settings,
+    rng: settings.createStepRng("Coast"),
+  }, cloneDeepKeepFunctions(map));
+  const replay = createCoastReplay({
+    ...settings,
+    rng: settings.createStepRng("Coast"),
+  }, cloneDeepKeepFunctions(map));
+  const finalReplayMap = replay.frames.at(-1).map;
+
+  assert.equal(finalReplayMap.cells.length, processed.cells.length);
+  assert.equal(finalReplayMap.edges.length, processed.edges.length);
+  assert.equal(finalReplayMap.nodes.length, processed.nodes.length);
+  assert.deepEqual(
+    finalReplayMap.cells.map((cell) => [cell.id, cell.type]),
+    processed.cells.map((cell) => [cell.id, cell.type]),
+  );
+  assert.deepEqual(
+    finalReplayMap.edges.map((edge) => [edge.id, terrainFlag(edge)]),
+    processed.edges.map((edge) => [edge.id, terrainFlag(edge)]),
+  );
+  assert.deepEqual(
+    finalReplayMap.nodes.map((node) => node.draw),
+    processed.nodes.map((node) => node.draw),
+  );
+}
+
+function validateCoastReplayDefaultFrames() {
+  const {settings, map} = createTwoCellCoastFixture("coast-replay-frames");
+  settings.coast = {
+    ...settings.coast,
+    largeAmplitude: 0.18,
+    mediumAmplitude: 0.08,
+    smallAmplitude: 0.03,
+    sampleCount: 4,
+    smoothingPasses: 1,
+  };
+
+  const replay = createCoastReplay({
+    ...settings,
+    rng: settings.createStepRng("Coast"),
+  }, cloneDeepKeepFunctions(map));
+  const labels = replay.frames.map((frame) => frame.label);
+
+  [
+    "Before coast",
+    "Sea border distance",
+    "Large noise",
+    "Medium noise",
+    "Small noise",
+    "Combined field",
+    "Initial terrain",
+    "Smoothing pass 1 / 1",
+    "Artifact cleanup",
+    "Final coast",
+  ].forEach((label) => assert.ok(labels.includes(label), label));
+}
+
+function validateCoastReplayOverlayIsolation() {
+  const {settings, map} = createTwoCellCoastFixture("coast-replay-overlay");
+  const replay = createCoastReplay({
+    ...settings,
+    rng: settings.createStepRng("Coast"),
+  }, cloneDeepKeepFunctions(map));
+  const fieldFrame = replay.frames.find((frame) => frame.label === "Sea border distance");
+  assert.ok(fieldFrame);
+  const before = summarizeMapState(fieldFrame.map);
+  const {calls, layers, svg} = createSvgProbe();
+
+  fieldFrame.map.drawOverlay(svg);
+
+  assert.deepEqual(summarizeMapState(fieldFrame.map), before);
+  assert.ok(calls.length > 0);
+  assert.ok(calls.every(call => call.layerId === "overlay"));
+  assert.equal(layers.get("nodes"), undefined);
+  assert.equal(layers.get("edges"), undefined);
+  assert.equal(layers.get("cells"), undefined);
+}
+
+function validateCoastSmoothingFramesDeterministic() {
+  const {settings, map} = createTwoCellCoastFixture("coast-replay-smoothing");
+  settings.coast = {
+    ...settings.coast,
+    largeAmplitude: 0.12,
+    mediumAmplitude: 0.06,
+    smallAmplitude: 0.02,
+    smoothingPasses: 2,
+  };
+
+  const first = createCoastReplay({
+    ...settings,
+    rng: settings.createStepRng("Coast"),
+  }, cloneDeepKeepFunctions(map));
+  const second = createCoastReplay({
+    ...settings,
+    rng: settings.createStepRng("Coast"),
+  }, cloneDeepKeepFunctions(map));
+
+  assert.deepEqual(
+    smoothingFrameTypes(first),
+    smoothingFrameTypes(second),
+  );
+}
+
+function terrainFlag(edge) {
+  if (edge.flags?.has(TERRAIN_COAST)) return TERRAIN_COAST;
+  if (edge.flags?.has(TERRAIN_SEA)) return TERRAIN_SEA;
+  if (edge.flags?.has(TERRAIN_LAND)) return TERRAIN_LAND;
+  return null;
+}
+
+function summarizeMapState(map) {
+  return {
+    nodes: map.nodes.map((node) => [node.id, node.x, node.y, node.type, node.draw]),
+    edges: map.edges.map((edge) => [edge.id, edge.type, terrainFlag(edge)]),
+    cells: map.cells.map((cell) => [cell.id, cell.type, cell.draw]),
+  };
+}
+
+function smoothingFrameTypes(replay) {
+  return replay.frames
+    .filter((frame) => frame.label.startsWith("Smoothing pass"))
+    .map((frame) => frame.map.cells.map((cell) => [cell.id, cell.type]));
+}
+
 validateCloneIdentityAndFlags();
 validateSnapshotDrawingUsesClonedNodes();
 validatePipelineClonesBeforeSteps();
@@ -450,11 +660,17 @@ validatePipelineStoresReplayWithoutMutatingPriorMaps();
 validateScatterReplay();
 validateStepRngDeterminism();
 validateGatherVoronoi();
+validateGatherReplay();
+validateMapClearClearsOverlay();
 validateCellDrawing();
 validateLloydRelaxation();
 validatePruneRemovesAndRewires();
 validatePruneCellDeletion();
 validatePruneBoundaryRules();
 validateSeaLandStepClassifiesAndTags();
+validateCoastReplayMatchesFinalClassification();
+validateCoastReplayDefaultFrames();
+validateCoastReplayOverlayIsolation();
+validateCoastSmoothingFramesDeterministic();
 
 console.log("AGENTS.md compliance validation passed");

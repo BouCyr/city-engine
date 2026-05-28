@@ -24,10 +24,16 @@ export const steps = [
   {
     title:"Gather",
     process:GATHER.cells,
+    createReplay: GATHER.createReplay,
     description: (settings, stepMap) => [
       `This step turns the scattered points into a Voronoi diagram. In practical terms, each point owns a polygonal territory: every location inside a given polygon is closer to that point than to any other point.`,
       `The result is a partition of the map into neighboring cells, so the full map of size <em>${settings.size}x${settings.size}</em> becomes fully covered by cell boundaries and shared edges.`,
       `After this pass, the map contains <em>${stepMap?.cells?.length ?? 0}</em> cells, <em>${stepMap?.nodes?.length ?? 0}</em> Voronoi nodes, and <em>${stepMap?.edges?.length ?? 0}</em> boundary-aware edges, which gives the rest of the pipeline concrete geometry to work with.`,
+    ],
+    explanation: (settings, stepResult) => [
+      `Gather builds one bounded Voronoi cell per valid POI by starting with the full <em>${settings.size}x${settings.size}</em> square and repeatedly clipping it to the half-plane closer to the active POI than to each competing POI.`,
+      `The replay advances by completed cell, while the current frame overlays the active site, nearby competitors, perpendicular bisectors, and the final clipped polygon so the clipping process remains readable even with many POIs.`,
+      `When a cell polygon is accepted, its vertices and edges are deduplicated through rounded coordinate and endpoint keys, so neighboring cells share the same node and edge objects in the generated graph. The final frame contains <em>${stepResult?.map?.cells?.length ?? 0}</em> cells, <em>${stepResult?.map?.nodes?.length ?? 0}</em> nodes, and <em>${stepResult?.map?.edges?.length ?? 0}</em> edges.`,
     ],
   },
   {
@@ -51,9 +57,17 @@ export const steps = [
   {
     title:"Coast",
     process:SEA_LAND.classifySeaLand,
+    createReplay: SEA_LAND.createReplay,
     description: (settings, stepMap) => [
       `This step classifies each current cell into <em>SEA</em> or <em>LAND</em> by combining a distance-from-sea-border field with layered deterministic noise.`,
       `It stores terrain in <em>cell.type</em> and flags, updates every edge as <em>SEA</em>, <em>LAND</em>, or <em>COAST</em>, and then renders nodes as hidden for this terrain-only view.`,
     ],
+    explanation: (settings, stepResult) => [
+      `Coast turns the pruned cell graph into terrain by measuring distance from the selected sea borders, then bending that distance field with deterministic large, medium, small, and optional extra noise layers.`,
+      `Each cell is sampled at its center, edge midpoints, and <em>${settings.coast.sampleCount}</em> deterministic interior points. If most samples meet the land threshold, the cell starts as <em>LAND</em>; otherwise it starts as <em>SEA</em>.`,
+      `The replay then shows each smoothing pass, artifact cleanup for tiny isolated components, and final edge classification. Edges between unlike terrain become <em>COAST</em>, while matching neighbors remain <em>SEA</em> or <em>LAND</em>.`,
+      `The final Coast result contains <em>${stepResult?.map?.cells?.length ?? 0}</em> terrain cells and <em>${stepResult?.map?.edges?.length ?? 0}</em> classified edges.`,
+    ],
+    renderExplanationExtras: SEA_LAND.renderExplanationExtras,
   },
 ]

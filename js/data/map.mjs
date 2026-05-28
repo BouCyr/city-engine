@@ -20,15 +20,19 @@ export function Map(settings){
       this.edges
         .filter(node => node.draw)
         .forEach(node => node.draw(svgDomElt));
+
+      this.drawOverlay?.(svgDomElt);
     },
 
     clear:function(svgDomElt){
       const nodesG = svgDomElt.querySelector("#nodes");
       const edgesG = svgDomElt.querySelector("#edges");
       const cellsG = svgDomElt.querySelector("#cells");
+      const overlayG = svgDomElt.querySelector("#overlay");
       if (cellsG) cellsG.innerHTML = "";
       if (nodesG) nodesG.innerHTML = "";
       if (edgesG) edgesG.innerHTML = "";
+      if (overlayG) overlayG.innerHTML = "";
     }
   };
 
