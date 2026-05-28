@@ -8,7 +8,7 @@ Registers generation steps in execution order and provides UI descriptions for e
 
 ## Public Exports And Callers
 
-Exports `steps`, an array consumed by `runPipeline` and `app.js`. Each entry has `title`, `process`, and `description`.
+Exports `steps`, an array consumed by `runPipeline`, `app.js`, and the replay worker service. Each entry has `title`, `process`, and `description`; replay-capable steps also expose `createReplay`.
 
 ## Inputs And Outputs
 
@@ -16,7 +16,7 @@ The step list references functions from the step modules. Description functions 
 
 ## Control Flow
 
-Execution order is Scatter, Gather, Lloyd, Prune, Coast. `runPipeline` iterates this array directly, so array order is the generation order.
+Execution order is Scatter, Gather, Lloyd, Prune, Coast. `runPipeline` iterates this array directly, so array order is the generation order. The replay worker uses the same step index to generate replay for one selected step on demand.
 
 ## Mutation And Identity
 

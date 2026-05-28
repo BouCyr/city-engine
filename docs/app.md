@@ -4,7 +4,7 @@ Source: `js/app.js`
 
 ## Role
 
-This is the browser entry point. It initializes settings, runs the generation pipeline, stores the current final map and all step snapshots, and wires the SVG, step list, details panel, and settings panel together.
+This is the browser entry point. It initializes settings, runs the generation pipeline, stores the current final map and all step snapshots, lazily requests replay frames from a worker, and wires the SVG, step list, details panel, and settings panel together.
 
 ## Public Exports And Callers
 
@@ -16,11 +16,11 @@ Inputs come from DOM elements (`map_svg`, `steps-list`, `details`, `settings-tog
 
 ## Control Flow
 
-On load, the module grabs the SVG, initializes the settings panel, builds the step list UI, initializes the settings toggle, runs `regenerate`, and clears the details panel. `regenerate` calls `runPipeline(settings)`, updates `map` and `stepResults`, and renders the active map. Settings changes are debounced by `scheduleRegeneration`.
+On load, the module grabs the SVG, initializes the settings panel, builds the step list UI, initializes the settings toggle, runs `regenerate`, and clears the details panel. `regenerate` calls `runPipeline(settings)`, updates `map` and `stepResults`, and renders the active map. Settings changes are debounced by `scheduleRegeneration`. When a step explanation opens, replay is requested for the selected step through `replay-worker.mjs` and hydrated back into renderable frame maps when ready.
 
 ## Mutation And Identity
 
-`app.js` does not directly mutate map graph internals. It stores the final `map` returned by the pipeline and the cloned step snapshots returned in `stepResults`. Rendering calls `displayMap.clear(svgDomElt)` and `displayMap.draw(svgDomElt)`, relying on entity draw functions preserved in snapshots.
+`app.js` does not directly mutate map graph internals. It stores the final `map` returned by the pipeline and the cloned step snapshots returned in `stepResults`. Lazy replay requests attach hydrated replay frames to the selected step result. Rendering calls `displayMap.clear(svgDomElt)` and `displayMap.draw(svgDomElt)`, relying on entity draw functions preserved or rehydrated in snapshots.
 
 ## Determinism
 
@@ -28,7 +28,7 @@ This file does not use random values. Determinism depends on the settings object
 
 ## Dependencies
 
-Depends on `steps`, `runPipeline`, and the settings panel helpers from `js/ui/settings-panel.mjs`.
+Depends on `steps`, `runPipeline`, replay serialization helpers from `js/replay-service.mjs`, and the settings panel helpers from `js/ui/settings-panel.mjs`.
 
 ## Edge Cases And Limitations
 

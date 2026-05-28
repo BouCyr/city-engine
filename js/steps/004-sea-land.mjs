@@ -473,18 +473,20 @@ function pushFieldReplayFrames(frames, settings, map, seaBorders, params, noiseS
   ];
 
   for (const layer of layers) {
-    const frameMap = cloneDeepKeepFunctions(map);
-    frameMap.drawOverlay = createCoastFieldOverlayDraw({
+    const overlay = createCoastFieldOverlaySpec({
       size: settings.size,
       seaBorders,
       params,
       noiseSeed,
       layer,
     });
+    const frameMap = cloneDeepKeepFunctions(map);
+    frameMap.drawOverlay = createCoastFieldOverlayDraw(overlay);
     frames.push({
       label: layer.label,
       text: layer.text,
       map: frameMap,
+      overlay,
     });
   }
 }
@@ -492,13 +494,23 @@ function pushFieldReplayFrames(frames, settings, map, seaBorders, params, noiseS
 function pushTerrainFrame(frames, map, label, text, centroids) {
   if (!frames) return;
 
+  const overlay = createCentroidOverlaySpec(centroids);
   const frameMap = cloneDeepKeepFunctions(map);
-  frameMap.drawOverlay = createCentroidOverlayDraw(centroids);
-  frames.push({label, text, map: frameMap});
+  frameMap.drawOverlay = createCentroidOverlayDraw(overlay);
+  frames.push({label, text, map: frameMap, overlay});
 }
 
-function createCoastFieldOverlayDraw({size, seaBorders, params, noiseSeed, layer}) {
-  const cells = createHeatmapCells(size, seaBorders, params, noiseSeed, layer);
+function createCoastFieldOverlaySpec({size, seaBorders, params, noiseSeed, layer}) {
+  return {
+    type: "coast-field",
+    size,
+    seaBorders: Array.from(seaBorders),
+    cells: createHeatmapCells(size, seaBorders, params, noiseSeed, layer),
+  };
+}
+
+function createCoastFieldOverlayDraw({size, seaBorders, cells}) {
+  const borders = new Set(seaBorders);
   return function drawCoastFieldOverlay(svg) {
     const overlay = svg.getElementById("overlay");
     if (!overlay) return;
@@ -510,12 +522,18 @@ function createCoastFieldOverlayDraw({size, seaBorders, params, noiseSeed, layer
       });
     }
 
-    appendSelectedBorderHighlights(overlay, size, seaBorders);
+    appendSelectedBorderHighlights(overlay, size, borders);
   };
 }
 
-function createCentroidOverlayDraw(centroids) {
-  const points = centroids.map((point) => ({x: point.x, y: point.y}));
+function createCentroidOverlaySpec(centroids) {
+  return {
+    type: "coast-centroids",
+    points: centroids.map((point) => ({x: point.x, y: point.y})),
+  };
+}
+
+function createCentroidOverlayDraw({points}) {
   return function drawCentroidOverlay(svg) {
     const overlay = svg.getElementById("overlay");
     if (!overlay) return;

@@ -15,22 +15,14 @@ export function runPipeline(settings, initialMap = new Map(settings), registered
       ...settings,
       rng: settings.createStepRng(step.title),
     };
-    const replaySettings = {
-      ...settings,
-      rng: settings.createStepRng(step.title),
-    };
     const beforeMetrics = collectMapMetrics(map);
     const startedAt = now();
     const stepMap = step.process(stepSettings, cloneDeepKeepFunctions(map));
     const durationMs = now() - startedAt;
-    const replay = step.createReplay
-      ? cloneReplay(step.createReplay(replaySettings, cloneDeepKeepFunctions(map)))
-      : null;
 
     stepResults.push({
       step: step.title,
       map: cloneDeepKeepFunctions(stepMap),
-      replay,
       metrics: {
         before: beforeMetrics,
         after: collectMapMetrics(stepMap),
@@ -53,20 +45,6 @@ function collectMapMetrics(map) {
     nodes: collectEntityMetrics(map.nodes),
     cells: collectEntityMetrics(map.cells),
     areas: collectEntityMetrics(map.areas),
-  };
-}
-
-function cloneReplay(replay) {
-  if (!replay?.frames) {
-    return null;
-  }
-
-  return {
-    ...replay,
-    frames: replay.frames.map((frame) => ({
-      ...frame,
-      map: cloneDeepKeepFunctions(frame.map),
-    })),
   };
 }
 

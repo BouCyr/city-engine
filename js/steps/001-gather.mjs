@@ -21,18 +21,20 @@ export function createReplay(settings, inputMap) {
   }];
 
   buildGather(settings, inputMap, (result, cellInfo) => {
-    const frameMap = cloneDeepKeepFunctions(result);
-    frameMap.drawOverlay = createGatherOverlayDraw({
+    const overlay = createGatherOverlaySpec({
       size: settings.size,
       site: cellInfo.site,
       sites: cellInfo.sites,
       polygon: cellInfo.polygon,
     });
+    const frameMap = cloneDeepKeepFunctions(result);
+    frameMap.drawOverlay = createGatherOverlayDraw(overlay);
 
     frames.push({
       label: `Cell ${cellInfo.cellNumber} / ${cellInfo.cellCount}`,
       text: `Cell ${cellInfo.cellNumber} is clipped to the half-planes where its POI stays closer than nearby competing POIs.`,
       map: frameMap,
+      overlay,
     });
   });
 
@@ -244,6 +246,20 @@ function clamp(value, size) {
   return value;
 }
 
+function createGatherOverlaySpec({size, site, sites, polygon}) {
+  return {
+    type: "gather",
+    size,
+    site: plainPoint(site),
+    sites: sites.map(plainPoint),
+    polygon: polygon.map(plainPoint),
+  };
+}
+
+function plainPoint(point) {
+  return {x: point.x, y: point.y};
+}
+
 function createGatherOverlayDraw({size, site, sites, polygon}) {
   const competitors = nearestCompetitors(site, sites, OVERLAY_COMPETITOR_LIMIT);
 
@@ -266,7 +282,7 @@ function createGatherOverlayDraw({size, site, sites, polygon}) {
 
 function nearestCompetitors(site, sites, limit) {
   return sites
-    .filter(other => other !== site)
+    .filter(other => !samePoint(other, site))
     .map(other => ({site: other, distance: distanceSquared(site, other)}))
     .sort((a, b) => a.distance - b.distance)
     .slice(0, limit)

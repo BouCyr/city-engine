@@ -4,7 +4,7 @@ Source: `js/pipeline.mjs`
 
 ## Role
 
-Runs the ordered generation steps and stores renderable snapshots for the initial and post-step maps.
+Runs the ordered generation steps and stores renderable snapshots for the initial and post-step maps. Replay generation is intentionally outside this hotpath.
 
 ## Public Exports And Callers
 
@@ -16,7 +16,7 @@ Inputs are a settings object with `createStepRng`, an optional initial `Map`, an
 
 ## Control Flow
 
-The pipeline clones the initial map for the first snapshot. For each registered step, it derives a step-scoped RNG from the step title, clones the current map before passing it to the step, stores a clone of the returned step map, then advances `map` to the returned object.
+The pipeline clones the initial map for the first snapshot. For each registered step, it derives a step-scoped RNG from the step title, clones the current map before passing it to the step, stores a clone of the returned step map, then advances `map` to the returned object. It does not call `createReplay`; replay is generated lazily by the UI worker.
 
 ## Mutation And Identity
 

@@ -1,5 +1,6 @@
 import {steps} from "./steps.mjs";
 import {runPipeline} from "./pipeline.mjs";
+import {hydrateReplay, plainSettings, serializeMap} from "./replay-service.mjs";
 import {createDefaultSettings, initSettingsPanel} from "./ui/settings-panel.mjs";
 
 export let settings = createDefaultSettings();
@@ -13,6 +14,10 @@ let settingsPanel;
 let pendingRegeneration = null;
 let replayFrameIndex = 0;
 let replayTimer = null;
+let replayWorker = null;
+let replayGenerationToken = 0;
+let nextReplayRequestId = 1;
+const pendingReplayRequests = new Map();
 
 const REPLAY_INTERVAL_MS = 500;
 
@@ -43,6 +48,8 @@ function renderCurrentMap() {
 
 function regenerate(nextSettings = settingsPanel?.readSettings?.() ?? settings) {
   settings = nextSettings;
+  replayGenerationToken += 1;
+  pendingReplayRequests.clear();
 
   const result = runPipeline(settings);
   map = result.map;
@@ -93,6 +100,7 @@ function initStepsUI() {
       replayFrameIndex = 0;
       stopReplayPlayback();
       updateSelectedStep();
+      requestReplayForSelectedStep();
       if (hoveredStepIndex === null || isStepExplanationOpen()) {
         renderCurrentMap();
       }
@@ -108,6 +116,7 @@ function initStepsUI() {
       replayFrameIndex = 0;
       stopReplayPlayback();
       updateSelectedStep();
+      requestReplayForSelectedStep();
       renderCurrentMap();
     });
 
@@ -248,6 +257,7 @@ function setStepExplanationOpen(open) {
   container.classList.toggle("step-explanation-open", open);
   explanation.inert = !open;
   details && (details.inert = open);
+  requestReplayForSelectedStep();
   renderCurrentMap();
 }
 
@@ -301,6 +311,8 @@ function renderStepExplanation() {
 
   if (result?.replay?.frames?.length) {
     panel.appendChild(createReplayControls(result.replay.frames));
+  } else if (step.createReplay) {
+    panel.appendChild(createReplayStatus(result));
   }
 }
 
@@ -396,6 +408,116 @@ function stopReplayPlayback() {
 
   clearInterval(replayTimer);
   replayTimer = null;
+}
+
+function requestReplayForSelectedStep() {
+  if (!isStepExplanationOpen()) {
+    return;
+  }
+
+  const step = steps[selectedStepIndex];
+  const result = resultForStep(selectedStepIndex);
+  const inputResult = stepResults[selectedStepIndex];
+  if (!step?.createReplay || !result || result.replay?.frames?.length || result.replayStatus === "loading") {
+    return;
+  }
+
+  const requestId = nextReplayRequestId;
+  nextReplayRequestId += 1;
+  result.replayStatus = "loading";
+  result.replayError = null;
+  pendingReplayRequests.set(requestId, {
+    generationToken: replayGenerationToken,
+    stepIndex: selectedStepIndex,
+  });
+
+  try {
+    getReplayWorker().postMessage({
+      requestId,
+      stepIndex: selectedStepIndex,
+      settingsData: plainSettings(settings),
+      inputMapData: serializeMap(inputResult.map),
+    });
+  } catch (error) {
+    pendingReplayRequests.delete(requestId);
+    result.replayStatus = "error";
+    result.replayError = error?.message ?? String(error);
+  }
+}
+
+function getReplayWorker() {
+  if (replayWorker) {
+    return replayWorker;
+  }
+
+  replayWorker = new Worker(new URL("./replay-worker.mjs", import.meta.url), {type: "module"});
+  replayWorker.onmessage = handleReplayWorkerMessage;
+  replayWorker.onerror = handleReplayWorkerError;
+  return replayWorker;
+}
+
+function handleReplayWorkerMessage(event) {
+  const {requestId, status, replay, error} = event.data ?? {};
+  const request = pendingReplayRequests.get(requestId);
+  if (!request) {
+    return;
+  }
+
+  pendingReplayRequests.delete(requestId);
+  if (request.generationToken !== replayGenerationToken) {
+    return;
+  }
+
+  const result = resultForStep(request.stepIndex);
+  if (!result) {
+    return;
+  }
+
+  if (status === "ready") {
+    result.replay = hydrateReplay(replay);
+    result.replayStatus = "ready";
+    result.replayError = null;
+  } else {
+    result.replayStatus = "error";
+    result.replayError = error ?? "Replay unavailable";
+  }
+
+  if (isStepExplanationOpen() && selectedStepIndex === request.stepIndex) {
+    replayFrameIndex = 0;
+    stopReplayPlayback();
+    renderCurrentMap();
+  }
+}
+
+function handleReplayWorkerError(error) {
+  for (const [requestId, request] of pendingReplayRequests) {
+    if (request.generationToken !== replayGenerationToken) {
+      pendingReplayRequests.delete(requestId);
+      continue;
+    }
+
+    const result = resultForStep(request.stepIndex);
+    if (result) {
+      result.replayStatus = "error";
+      result.replayError = error?.message ?? "Replay unavailable";
+    }
+    pendingReplayRequests.delete(requestId);
+  }
+
+  if (isStepExplanationOpen()) {
+    renderCurrentMap();
+  }
+}
+
+function createReplayStatus(result) {
+  const p = document.createElement("p");
+  p.className = "replay-frame-text";
+  if (result?.replayStatus === "error") {
+    p.textContent = `Replay unavailable${result.replayError ? `: ${result.replayError}` : ""}`;
+  } else {
+    p.textContent = "Replay loading...";
+  }
+  return p;
 }
 
 svgDomElt = document.getElementById("map_svg");

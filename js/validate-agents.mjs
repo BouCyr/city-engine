@@ -6,6 +6,14 @@ import {Map} from "./data/map.mjs";
 import {Node, Poi} from "./data/nodes.mjs";
 import {Settings} from "./data/settings.mjs";
 import {runPipeline} from "./pipeline.mjs";
+import {
+  buildReplayPayload,
+  hydrateReplay,
+  plainSettings,
+  serializeMap,
+  serializeReplay,
+} from "./replay-service.mjs";
+import {steps} from "./steps.mjs";
 import {createReplay as createScatterReplay, scatterPoints} from "./steps/000-scatter.mjs";
 import {cells, createReplay as createGatherReplay} from "./steps/001-gather.mjs";
 import {relax} from "./steps/002-lloyd.mjs";
@@ -114,22 +122,15 @@ function validatePipelineClonesBeforeSteps() {
   assert.equal(map.nodes.length, 1);
 }
 
-function validatePipelineStoresReplayWithoutMutatingPriorMaps() {
+function validatePipelineSkipsReplayHotpath() {
   const settings = new Settings("pipeline-replay");
-  settings.scatter.nb = 2;
   const initialMap = new Map(settings);
+  let replayCalled = false;
   const pipeline = [{
     title: "Replay",
-    createReplay(stepSettings, inputMap) {
-      const firstFrame = cloneDeepKeepFunctions(inputMap);
-      inputMap.nodes.push(Poi("replay-only", 1, 1));
-      const secondFrame = cloneDeepKeepFunctions(inputMap);
-      return {
-        frames: [
-          {label: "Before", map: firstFrame},
-          {label: "After", map: secondFrame},
-        ],
-      };
+    createReplay() {
+      replayCalled = true;
+      throw new Error("Replay must not run in runPipeline");
     },
     process(stepSettings, map) {
       map.nodes.push(Poi("processed", 10, 20));
@@ -142,9 +143,8 @@ function validatePipelineStoresReplayWithoutMutatingPriorMaps() {
   assert.equal(initialMap.nodes.length, 0);
   assert.equal(stepResults[0].map.nodes.length, 0);
   assert.equal(stepResults[1].map.nodes.length, 1);
-  assert.equal(stepResults[1].replay.frames.length, 2);
-  assert.equal(stepResults[1].replay.frames[0].map.nodes.length, 0);
-  assert.equal(stepResults[1].replay.frames[1].map.nodes.length, 1);
+  assert.equal(stepResults[1].replay, undefined);
+  assert.equal(replayCalled, false);
 }
 
 function validateScatterReplay() {
@@ -629,6 +629,73 @@ function validateCoastSmoothingFramesDeterministic() {
   );
 }
 
+function validateReplaySerializationHydration() {
+  const settings = new Settings("replay-serialization");
+  const input = new Map(settings);
+  input.nodes.push(
+    Poi("A", 750, 750),
+    Poi("B", 2250, 750),
+    Poi("C", 1500, 2250),
+  );
+  const replay = createGatherReplay({
+    ...settings,
+    rng: settings.createStepRng("Gather"),
+  }, input);
+  const payload = structuredClone(serializeReplay(replay));
+  const hydrated = hydrateReplay(payload);
+  const frameMap = hydrated.frames[1].map;
+
+  assertGraphIdentity(frameMap);
+
+  const {calls, layers, svg} = createSvgProbe();
+  frameMap.drawOverlay(svg);
+  assert.ok(calls.length > 0);
+  assert.ok(calls.every(call => call.layerId === "overlay"));
+  assert.equal(layers.get("nodes"), undefined);
+  assert.equal(layers.get("edges"), undefined);
+  assert.equal(layers.get("cells"), undefined);
+}
+
+function validateReplayServiceBuildsSelectedStepPayload() {
+  const {settings, map} = createTwoCellCoastFixture("replay-service-coast");
+  const payload = structuredClone(buildReplayPayload({
+    settingsData: plainSettings(settings),
+    stepIndex: steps.findIndex((step) => step.title === "Coast"),
+    inputMapData: serializeMap(map),
+  }));
+  const hydrated = hydrateReplay(payload);
+  const processed = classifySeaLand({
+    ...settings,
+    rng: settings.createStepRng("Coast"),
+  }, cloneDeepKeepFunctions(map));
+  const finalReplayMap = hydrated.frames.at(-1).map;
+
+  assertGraphIdentity(finalReplayMap);
+  assert.deepEqual(
+    finalReplayMap.cells.map((cell) => [cell.id, cell.type]),
+    processed.cells.map((cell) => [cell.id, cell.type]),
+  );
+  assert.deepEqual(
+    finalReplayMap.edges.map((edge) => [edge.id, terrainFlag(edge)]),
+    processed.edges.map((edge) => [edge.id, terrainFlag(edge)]),
+  );
+}
+
+function assertGraphIdentity(map) {
+  for (const edge of map.edges) {
+    assert.ok(map.nodes.includes(edge.start));
+    assert.ok(map.nodes.includes(edge.end));
+    assert.ok(edge.start.edges.has(edge));
+    assert.ok(edge.end.edges.has(edge));
+    if (edge.leftCell) assert.ok(map.cells.includes(edge.leftCell));
+    if (edge.rightCell) assert.ok(map.cells.includes(edge.rightCell));
+  }
+
+  for (const cell of map.cells) {
+    assert.ok(cell.edges.every((edge) => map.edges.includes(edge)));
+  }
+}
+
 function terrainFlag(edge) {
   if (edge.flags?.has(TERRAIN_COAST)) return TERRAIN_COAST;
   if (edge.flags?.has(TERRAIN_SEA)) return TERRAIN_SEA;
@@ -653,7 +720,7 @@ function smoothingFrameTypes(replay) {
 validateCloneIdentityAndFlags();
 validateSnapshotDrawingUsesClonedNodes();
 validatePipelineClonesBeforeSteps();
-validatePipelineStoresReplayWithoutMutatingPriorMaps();
+validatePipelineSkipsReplayHotpath();
 validateScatterReplay();
 validateStepRngDeterminism();
 validateGatherVoronoi();
@@ -669,5 +736,7 @@ validateCoastReplayMatchesFinalClassification();
 validateCoastReplayDefaultFrames();
 validateCoastReplayOverlayIsolation();
 validateCoastSmoothingFramesDeterministic();
+validateReplaySerializationHydration();
+validateReplayServiceBuildsSelectedStepPayload();
 
 console.log("AGENTS.md compliance validation passed");
