@@ -20,6 +20,23 @@ let nextReplayRequestId = 1;
 const pendingReplayRequests = new Map();
 
 const REPLAY_INTERVAL_MS = 500;
+const ZOOM_IN_FACTOR = 0.9;
+const ZOOM_OUT_FACTOR = 1.1;
+const MIN_VIEW_RATIO = 0.12;
+
+const camera = {
+  x: 0,
+  y: 0,
+  width: settings.size,
+  height: settings.size,
+  size: settings.size,
+};
+
+const panState = {
+  active: false,
+  pointerId: null,
+  lastPoint: null,
+};
 
 function activeStepIndex() {
   if (isStepExplanationOpen()) {
@@ -39,7 +56,7 @@ function renderCurrentMap() {
   const replayFrame = activeReplayFrame();
   const displayMap = replayFrame?.map ?? result?.map ?? map;
 
-  svgDomElt.setAttribute("viewBox", `0 0 ${settings.size} ${settings.size}`);
+  applyCameraForSize(displayMap?.size ?? settings.size);
   displayMap.clear(svgDomElt);
   displayMap.draw(svgDomElt);
   renderStepDetails(steps[index], result);
@@ -47,6 +64,7 @@ function renderCurrentMap() {
 }
 
 function regenerate(nextSettings = settingsPanel?.readSettings?.() ?? settings) {
+  const previousSize = settings.size;
   settings = nextSettings;
   replayGenerationToken += 1;
   pendingReplayRequests.clear();
@@ -57,6 +75,11 @@ function regenerate(nextSettings = settingsPanel?.readSettings?.() ?? settings) 
   selectedStepIndex = Math.min(selectedStepIndex, steps.length - 1);
   replayFrameIndex = 0;
   stopReplayPlayback();
+  if (previousSize !== settings.size) {
+    resetCamera(settings.size);
+  } else {
+    applyCameraForSize(settings.size);
+  }
 
   renderCurrentMap();
 }
@@ -525,6 +548,7 @@ settingsPanel = initSettingsPanel(document.getElementById("settings-panel"), sch
 initStepsUI();
 initSettingsToggle();
 initStepExplanationPanel();
+initMapInteractions();
 regenerate(settings);
 
 function createMetricsDetails(metrics) {
@@ -679,4 +703,136 @@ function formatDuration(value) {
   }
 
   return value.toFixed(1);
+}
+
+function initMapInteractions() {
+  if (!svgDomElt) return;
+
+  svgDomElt.addEventListener("wheel", onMapWheel, {passive: false});
+  svgDomElt.addEventListener("pointerdown", onMapPointerDown);
+  svgDomElt.addEventListener("pointermove", onMapPointerMove);
+  svgDomElt.addEventListener("pointerup", onMapPointerUp);
+  svgDomElt.addEventListener("pointercancel", onMapPointerUp);
+  svgDomElt.addEventListener("dblclick", () => resetCamera(settings.size));
+}
+
+function onMapWheel(event) {
+  event.preventDefault();
+  if (!svgDomElt) return;
+
+  const scale = event.deltaY < 0 ? ZOOM_IN_FACTOR : ZOOM_OUT_FACTOR;
+  zoomAtClientPoint(event.clientX, event.clientY, scale);
+}
+
+function onMapPointerDown(event) {
+  if (event.button !== 0 || !svgDomElt) return;
+
+  const point = clientToMapPoint(event.clientX, event.clientY);
+  if (!point) return;
+
+  event.preventDefault();
+  panState.active = true;
+  panState.pointerId = event.pointerId;
+  panState.lastPoint = point;
+  svgDomElt.classList.add("is-panning");
+  svgDomElt.setPointerCapture?.(event.pointerId);
+}
+
+function onMapPointerMove(event) {
+  if (!panState.active || panState.pointerId !== event.pointerId || !svgDomElt) return;
+
+  const nextPoint = clientToMapPoint(event.clientX, event.clientY);
+  if (!nextPoint || !panState.lastPoint) return;
+
+  const dx = nextPoint.x - panState.lastPoint.x;
+  const dy = nextPoint.y - panState.lastPoint.y;
+
+  camera.x -= dx;
+  camera.y -= dy;
+  panState.lastPoint = nextPoint;
+  applyCameraViewBox();
+}
+
+function onMapPointerUp(event) {
+  if (!panState.active || panState.pointerId !== event.pointerId || !svgDomElt) return;
+
+  panState.active = false;
+  panState.pointerId = null;
+  panState.lastPoint = null;
+  svgDomElt.classList.remove("is-panning");
+  svgDomElt.releasePointerCapture?.(event.pointerId);
+}
+
+function zoomAtClientPoint(clientX, clientY, scale) {
+  const anchor = clientToMapPoint(clientX, clientY);
+  if (!anchor) return;
+
+  const minSize = camera.size * MIN_VIEW_RATIO;
+  const nextWidth = clamp(camera.width * scale, minSize, camera.size);
+  const nextHeight = clamp(camera.height * scale, minSize, camera.size);
+  const ratioX = (anchor.x - camera.x) / camera.width;
+  const ratioY = (anchor.y - camera.y) / camera.height;
+
+  camera.x = anchor.x - ratioX * nextWidth;
+  camera.y = anchor.y - ratioY * nextHeight;
+  camera.width = nextWidth;
+  camera.height = nextHeight;
+  applyCameraViewBox();
+}
+
+function clientToMapPoint(clientX, clientY) {
+  if (!svgDomElt) return null;
+
+  const rect = svgDomElt.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+
+  const relX = (clientX - rect.left) / rect.width;
+  const relY = (clientY - rect.top) / rect.height;
+
+  return {
+    x: camera.x + relX * camera.width,
+    y: camera.y + relY * camera.height,
+  };
+}
+
+function applyCameraForSize(size) {
+  if (!Number.isFinite(size) || size <= 0) return;
+
+  if (camera.size !== size) {
+    resetCamera(size);
+    return;
+  }
+
+  applyCameraViewBox();
+}
+
+function resetCamera(size = settings.size) {
+  camera.size = size;
+  camera.x = 0;
+  camera.y = 0;
+  camera.width = size;
+  camera.height = size;
+  applyCameraViewBox();
+}
+
+function applyCameraViewBox() {
+  if (!svgDomElt) return;
+
+  clampCamera();
+  svgDomElt.setAttribute("viewBox", `${camera.x} ${camera.y} ${camera.width} ${camera.height}`);
+}
+
+function clampCamera() {
+  const minSize = camera.size * MIN_VIEW_RATIO;
+  camera.width = clamp(camera.width, minSize, camera.size);
+  camera.height = clamp(camera.height, minSize, camera.size);
+
+  const maxX = Math.max(0, camera.size - camera.width);
+  const maxY = Math.max(0, camera.size - camera.height);
+  camera.x = clamp(camera.x, 0, maxX);
+  camera.y = clamp(camera.y, 0, maxY);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }

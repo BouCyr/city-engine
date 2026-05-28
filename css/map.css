@@ -18,6 +18,12 @@
   max-height: 100%;
   width: auto;
   height: auto;
+  cursor: grab;
+  touch-action: none;
+}
+
+#map_svg.is-panning {
+  cursor: grabbing;
 }
 
 .cell {
