@@ -278,6 +278,7 @@ function validateMapClearClearsOverlay() {
   const {layers, svg} = createSvgProbe();
   map.clear(svg);
 
+  assert.equal(layers.get("areas").innerHTML, "");
   assert.equal(layers.get("cells").innerHTML, "");
   assert.equal(layers.get("nodes").innerHTML, "");
   assert.equal(layers.get("edges").innerHTML, "");
@@ -499,6 +500,7 @@ function validateSeaLandStepClassifiesAndTags() {
   assert.equal(seaLandCells.length, result.cells.length);
   assert.ok(result.cells.every((cell) => cell.flags instanceof Set));
   assert.ok(result.cells.every((cell) => cell.flags.has(cell.type)));
+  assert.ok(result.cells.every((cell) => cell.draw === null));
 
   const sharedEdge = result.edges.find((edge) =>
     (edge.leftCell === cellA && edge.rightCell === cellB) ||
@@ -522,6 +524,16 @@ function validateSeaLandStepClassifiesAndTags() {
     edge.flags.has(TERRAIN_COAST)
   ));
   assert.equal(result.nodes.every((node) => node.draw === null), true);
+
+  assert.equal(result.areas.length, 1);
+  assert.equal(result.areas[0].name, "terrain");
+  assert.equal(result.areas[0].areas.length, 2);
+  assert.equal(result.areas[0].areas[0].name, "sea");
+  assert.equal(result.areas[0].areas[1].name, "land");
+  assert.equal(result.areas[0].areas[0].type, TERRAIN_SEA);
+  assert.equal(result.areas[0].areas[1].type, TERRAIN_LAND);
+  assert.ok(result.areas[0].areas[0].cells.every((cell) => result.cells.includes(cell)));
+  assert.ok(result.areas[0].areas[1].cells.every((cell) => result.cells.includes(cell)));
 }
 
 function validateCoastReplayMatchesFinalClassification() {
@@ -679,6 +691,10 @@ function validateReplayServiceBuildsSelectedStepPayload() {
     finalReplayMap.edges.map((edge) => [edge.id, terrainFlag(edge)]),
     processed.edges.map((edge) => [edge.id, terrainFlag(edge)]),
   );
+  assert.deepEqual(
+    summarizeAreas(finalReplayMap),
+    summarizeAreas(processed),
+  );
 }
 
 function assertGraphIdentity(map) {
@@ -694,6 +710,13 @@ function assertGraphIdentity(map) {
   for (const cell of map.cells) {
     assert.ok(cell.edges.every((edge) => map.edges.includes(edge)));
   }
+
+  for (const group of map.areas ?? []) {
+    assert.ok(Array.isArray(group.areas));
+    for (const area of group.areas ?? []) {
+      assert.ok(area.cells.every((cell) => map.cells.includes(cell)));
+    }
+  }
 }
 
 function terrainFlag(edge) {
@@ -708,7 +731,19 @@ function summarizeMapState(map) {
     nodes: map.nodes.map((node) => [node.id, node.x, node.y, node.type, node.draw]),
     edges: map.edges.map((edge) => [edge.id, edge.type, terrainFlag(edge)]),
     cells: map.cells.map((cell) => [cell.id, cell.type, cell.draw]),
+    areas: summarizeAreas(map),
   };
+}
+
+function summarizeAreas(map) {
+  return (map.areas ?? []).map((group) => ({
+    name: group.name,
+    areas: (group.areas ?? []).map((area) => ({
+      name: area.name,
+      type: area.type,
+      cellIds: (area.cells ?? []).map((cell) => cell.id).sort(),
+    })),
+  }));
 }
 
 function smoothingFrameTypes(replay) {

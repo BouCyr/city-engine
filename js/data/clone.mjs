@@ -42,7 +42,7 @@ function cloneMapGraph(map, seen) {
   seen.set(map, clone);
 
   for (const key of Reflect.ownKeys(map)) {
-    if (key !== "nodes" && key !== "edges" && key !== "cells") {
+    if (key !== "nodes" && key !== "edges" && key !== "cells" && key !== "areas") {
       clone[key] = cloneDeepKeepFunctions(map[key], seen);
     }
   }
@@ -82,6 +82,16 @@ function cloneMapGraph(map, seen) {
     edgeClone.leftCell = edge.leftCell ? cellMap.get(edge.leftCell) : null;
     edgeClone.rightCell = edge.rightCell ? cellMap.get(edge.rightCell) : null;
   }
+
+  clone.areas = (map.areas ?? []).map((group) => {
+    const groupClone = clonePlainGraphObject(group, seen, ["areas"]);
+    groupClone.areas = (group.areas ?? []).map((area) => {
+      const areaClone = clonePlainGraphObject(area, seen, ["cells"]);
+      areaClone.cells = (area.cells ?? []).map((cell) => cellMap.get(cell)).filter(Boolean);
+      return areaClone;
+    });
+    return groupClone;
+  });
 
   return clone;
 }

@@ -1,4 +1,5 @@
 import {orderedCellPoints} from "./data/cell.mjs";
+import {Area, AreaGroup, drawArea} from "./data/area.mjs";
 import {Map as CityMap} from "./data/map.mjs";
 import {Settings} from "./data/settings.mjs";
 import {steps} from "./steps.mjs";
@@ -98,6 +99,15 @@ export function serializeMap(map) {
       fill: cell.fill ?? null,
       draw: cell.draw !== null,
     })),
+    areas: (map.areas ?? []).map((group) => ({
+      name: group.name,
+      areas: (group.areas ?? []).map((area) => ({
+        name: area.name,
+        type: area.type,
+        cellIds: (area.cells ?? []).map((cell) => cell.id),
+        draw: area.draw !== null,
+      })),
+    })),
   };
 }
 
@@ -159,6 +169,20 @@ export function hydrateMap(data) {
     edge.leftCell = edgeData.leftCellId ? cellById.get(edgeData.leftCellId) ?? null : null;
     edge.rightCell = edgeData.rightCellId ? cellById.get(edgeData.rightCellId) ?? null : null;
   }
+
+  map.areas = (data?.areas ?? []).map((groupData) => (
+    AreaGroup(
+      groupData.name,
+      (groupData.areas ?? []).map((areaData) => (
+        Area(
+          areaData.name,
+          areaData.type,
+          (areaData.cellIds ?? []).map((id) => cellById.get(id)).filter(Boolean),
+          areaData.draw ? drawArea : null,
+        )
+      )),
+    )
+  ));
 
   return map;
 }

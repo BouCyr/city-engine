@@ -19,6 +19,10 @@
   fill: rgba(200, 100, 200, 0.5);
 }
 
+.area {
+  stroke: none;
+}
+
 .terrain-sea {
   fill: var(--sea-fill);
 }

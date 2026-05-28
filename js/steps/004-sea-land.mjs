@@ -1,4 +1,5 @@
 import {orderedCellPoints} from "../data/cell.mjs";
+import {Area, AreaGroup} from "../data/area.mjs";
 import {cloneDeepKeepFunctions} from "../data/clone.mjs";
 import {valueNoise2D} from "../data/noise.mjs";
 
@@ -248,6 +249,23 @@ function drawTerrainCell(svg) {
   layer.appendChild(polygon);
 }
 
+function rebuildTerrainAreas(map) {
+  const seaCells = [];
+  const landCells = [];
+
+  for (const cell of map.cells) {
+    if (cell.type === TERRAIN_SEA) seaCells.push(cell);
+    else if (cell.type === TERRAIN_LAND) landCells.push(cell);
+  }
+
+  map.areas = [
+    AreaGroup("terrain", [
+      Area("sea", TERRAIN_SEA, seaCells),
+      Area("land", TERRAIN_LAND, landCells),
+    ]),
+  ];
+}
+
 function drawTerrainEdge(svg) {
   const layer = svg.getElementById("edges");
   if (!layer) return;
@@ -328,8 +346,9 @@ function buildCoast(settings, map, options = {}) {
       : TERRAIN_SEA;
     cell.type = terrain;
     setTerrainFlags(cell, terrain);
-    cell.draw = drawTerrainCell;
+    cell.draw = null;
   });
+  rebuildTerrainAreas(map);
 
   pushTerrainFrame(frames, map, "Initial terrain", "Cells are classified from each centroid's field value before neighbor smoothing.", centroids);
 
@@ -361,7 +380,9 @@ function buildCoast(settings, map, options = {}) {
     for (const [cell, terrain] of nextTypes) {
       cell.type = terrain;
       setTerrainFlags(cell, terrain);
+      cell.draw = null;
     }
+    rebuildTerrainAreas(map);
 
     pushTerrainFrame(
       frames,
@@ -373,6 +394,10 @@ function buildCoast(settings, map, options = {}) {
   }
 
   removeTinyArtifacts(map, seaBorders, params.artifactsMax);
+  for (const cell of map.cells) {
+    cell.draw = null;
+  }
+  rebuildTerrainAreas(map);
   pushTerrainFrame(frames, map, "Artifact cleanup", "Tiny isolated terrain components are flipped unless they touch a selected sea border.", centroids);
 
   for (const edge of map.edges) {
@@ -383,7 +408,9 @@ function buildCoast(settings, map, options = {}) {
 
   for (const cell of map.cells) {
     setTerrainFlags(cell, cell.type);
+    cell.draw = null;
   }
+  rebuildTerrainAreas(map);
 
   for (const node of map.nodes) {
     node.draw = null;
