@@ -86,7 +86,7 @@
   opacity: 0.95;
 }
 
-.coast-sample-point {
+.coast-centroid-point {
   fill: rgba(255, 255, 255, 0.72);
   stroke: rgba(22, 42, 54, 0.8);
   stroke-width: 1.2;

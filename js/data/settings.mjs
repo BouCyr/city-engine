@@ -23,8 +23,6 @@ export function Settings(seed="seed") {
       largeAmplitude: 0.18,
       mediumAmplitude: 0.08,
       smallAmplitude: 0.03,
-      extraNoise: [],
-      sampleCount: 4,
       smoothingPasses: 1,
       smoothingBias: 0.52,
       artifactsMax: 1,
@@ -156,14 +154,6 @@ export const SETTING_GROUPS = [
         max: 1,
         step: 0.01,
         help: "Controls how strongly fine noise roughens the coastline.",
-      },
-      {
-        path: "coast.sampleCount",
-        label: "Extra samples",
-        type: "number",
-        min: 0,
-        step: 1,
-        help: "Adds deterministic sample points inside each cell before terrain classification.",
       },
       {
         path: "coast.smoothingPasses",

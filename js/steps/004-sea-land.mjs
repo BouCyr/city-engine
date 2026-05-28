@@ -17,8 +17,6 @@ const DEFAULT_COAST = {
   largeAmplitude: 0.18,
   mediumAmplitude: 0.08,
   smallAmplitude: 0.03,
-  extraNoise: [],
-  sampleCount: 4,
   smoothingPasses: 1,
   smoothingBias: 0.52,
   artifactsMax: 1,
@@ -66,14 +64,9 @@ function normalizeSettings(coastSettings) {
     largeAmplitude: toNumber(safeCoastSettings.largeAmplitude, DEFAULT_COAST.largeAmplitude),
     mediumAmplitude: toNumber(safeCoastSettings.mediumAmplitude, DEFAULT_COAST.mediumAmplitude),
     smallAmplitude: toNumber(safeCoastSettings.smallAmplitude, DEFAULT_COAST.smallAmplitude),
-    sampleCount: Math.max(0, Math.floor(toNumber(safeCoastSettings.sampleCount, DEFAULT_COAST.sampleCount))),
     smoothingPasses: Math.max(0, Math.floor(toNumber(safeCoastSettings.smoothingPasses, DEFAULT_COAST.smoothingPasses))),
     smoothingBias: Math.max(0, Math.min(1, toNumber(safeCoastSettings.smoothingBias, DEFAULT_COAST.smoothingBias))),
     artifactsMax: Math.max(0, Math.floor(toNumber(safeCoastSettings.artifactsMax, DEFAULT_COAST.artifactsMax))),
-    extraNoise: (safeCoastSettings.extraNoise || []).map((layer) => ({
-      scale: toNumberArray(layer?.scale, DEFAULT_COAST.smallScale),
-      amplitude: toNumber(layer?.amplitude, 0),
-    })),
   };
 }
 
@@ -123,18 +116,12 @@ function coastLayersAt(point, size, seaBorders, params, seed) {
   const medium = toSigned(valueNoise2D(point.x, point.y, params.mediumScale, seed + 1)) * params.mediumAmplitude;
   const small = toSigned(valueNoise2D(point.x, point.y, params.smallScale, seed + 2)) * params.smallAmplitude;
 
-  const extra = params.extraNoise.map((layer, index) => (
-    toSigned(valueNoise2D(point.x, point.y, layer.scale, seed + index + 10)) * layer.amplitude
-  ));
-  const extraTotal = extra.reduce((sum, value) => sum + value, 0);
-
   return {
     distance: baseDistance,
     large,
     medium,
     small,
-    extra,
-    combined: baseDistance + large + medium + small + extraTotal,
+    combined: baseDistance + large + medium + small,
   };
 }
 
@@ -154,44 +141,6 @@ function centerPoint(points) {
   }, {x: 0, y: 0});
 
   return {x: total.x / points.length, y: total.y / points.length};
-}
-
-function sampleCell(points, edges, rng, randomSamples) {
-  const samples = [];
-  const center = centerPoint(points);
-
-  samples.push(center);
-
-  for (const edge of edges) {
-    samples.push({
-      x: (edge.start.x + edge.end.x) / 2,
-      y: (edge.start.y + edge.end.y) / 2,
-    });
-  }
-
-  for (let index = 0; index < randomSamples; index += 1) {
-    if (points.length === 0) {
-      samples.push(center);
-      continue;
-    }
-
-    const aIndex = Math.floor((rng?.next?.() ?? 0.5) * points.length);
-    const bIndex = (aIndex + 1) % points.length;
-    const random01 = rng?.next?.() ?? 0.5;
-    const random02 = rng?.next?.() ?? 0.5;
-
-    const a = points[aIndex];
-    const b = points[bIndex];
-    const t = random01;
-    const u = random02 * (1 - t);
-
-    samples.push({
-      x: center.x * (1 - t - u) + a.x * t + b.x * u,
-      y: center.y * (1 - t - u) + a.y * t + b.y * u,
-    });
-  }
-
-  return samples;
 }
 
 function inferMissingCellTerrain(edge, seaBorders, size) {
@@ -346,16 +295,7 @@ export function renderExplanationExtras(panel, settings) {
   appendSummaryRow(tbody, "Large noise", `${params.largeScale} scale, ${formatNumber(params.largeAmplitude)} amplitude`);
   appendSummaryRow(tbody, "Medium noise", `${params.mediumScale} scale, ${formatNumber(params.mediumAmplitude)} amplitude`);
   appendSummaryRow(tbody, "Small noise", `${params.smallScale} scale, ${formatNumber(params.smallAmplitude)} amplitude`);
-
-  if (params.extraNoise.length > 0) {
-    params.extraNoise.forEach((layer, index) => {
-      appendSummaryRow(tbody, `Extra noise ${index + 1}`, `${layer.scale} scale, ${formatNumber(layer.amplitude)} amplitude`);
-    });
-  } else {
-    appendSummaryRow(tbody, "Extra noise", "None");
-  }
-
-  appendSummaryRow(tbody, "Samples", `${params.sampleCount} extra per cell`);
+  appendSummaryRow(tbody, "Classification point", "Cell centroid");
   appendSummaryRow(tbody, "Smoothing", `${params.smoothingPasses} pass${params.smoothingPasses === 1 ? "" : "es"}, ${formatNumber(params.smoothingBias)} bias`);
   appendSummaryRow(tbody, "Artifact limit", `${params.artifactsMax} cell${params.artifactsMax === 1 ? "" : "s"}`);
 
@@ -366,7 +306,6 @@ export function renderExplanationExtras(panel, settings) {
 function buildCoast(settings, map, options = {}) {
   const params = normalizeSettings(settings?.coast);
   const seaBorders = normalizeBorders(params.seaBorders);
-  const randomSamples = Math.max(0, Number(params.sampleCount) || 0);
   const passes = Math.max(0, Number(params.smoothingPasses) || 0);
   const noiseSeed = normalizeSeed(settings?.rng?.next?.() ?? 0.12);
   const frames = options.captureReplay ? [{
@@ -374,7 +313,7 @@ function buildCoast(settings, map, options = {}) {
     text: "Coast starts from the pruned cell graph before any terrain is assigned.",
     map: cloneDeepKeepFunctions(map),
   }] : null;
-  const samplePoints = [];
+  const centroids = [];
 
   if (frames) {
     pushFieldReplayFrames(frames, settings, map, seaBorders, params, noiseSeed);
@@ -382,21 +321,17 @@ function buildCoast(settings, map, options = {}) {
 
   map.cells.forEach((cell) => {
     const points = orderedCellPoints(cell);
-    const samples = sampleCell(points, cell.edges || [], settings?.rng, randomSamples);
-    samplePoints.push(...samples);
-    const landSamples = samples.reduce((count, point) => (
-      fieldAt(point, map.size, seaBorders, params, noiseSeed) >= params.threshold
-        ? count + 1
-        : count
-    ), 0);
-
-    const terrain = landSamples > (samples.length / 2) ? TERRAIN_LAND : TERRAIN_SEA;
+    const centroid = centerPoint(points);
+    centroids.push(centroid);
+    const terrain = fieldAt(centroid, map.size, seaBorders, params, noiseSeed) >= params.threshold
+      ? TERRAIN_LAND
+      : TERRAIN_SEA;
     cell.type = terrain;
     setTerrainFlags(cell, terrain);
     cell.draw = drawTerrainCell;
   });
 
-  pushTerrainFrame(frames, map, "Initial terrain", "Cells are classified from sampled field values before neighbor smoothing.", samplePoints);
+  pushTerrainFrame(frames, map, "Initial terrain", "Cells are classified from each centroid's field value before neighbor smoothing.", centroids);
 
   for (let pass = 0; pass < passes; pass += 1) {
     const nextTypes = new Map();
@@ -433,12 +368,12 @@ function buildCoast(settings, map, options = {}) {
       map,
       `Smoothing pass ${pass + 1} / ${passes}`,
       "Neighbor edge lengths vote cells toward the dominant adjacent terrain when the configured bias is exceeded.",
-      samplePoints,
+      centroids,
     );
   }
 
   removeTinyArtifacts(map, seaBorders, params.artifactsMax);
-  pushTerrainFrame(frames, map, "Artifact cleanup", "Tiny isolated terrain components are flipped unless they touch a selected sea border.", samplePoints);
+  pushTerrainFrame(frames, map, "Artifact cleanup", "Tiny isolated terrain components are flipped unless they touch a selected sea border.", centroids);
 
   for (const edge of map.edges) {
     const terrain = classifyEdgeTerrain(edge, seaBorders, map.size);
@@ -528,15 +463,9 @@ function pushFieldReplayFrames(frames, settings, map, seaBorders, params, noiseS
       kind: "small",
       signed: true,
     },
-    ...params.extraNoise.map((layer, index) => ({
-      label: `Extra noise ${index + 1}`,
-      text: `Extra noise layer ${index + 1} contributes scale ${layer.scale} with amplitude ${formatNumber(layer.amplitude)}.`,
-      kind: `extra:${index}`,
-      signed: true,
-    })),
     {
       label: "Combined field",
-      text: `Distance and noise layers are added together; sampled values at or above ${formatNumber(params.threshold)} become land votes.`,
+      text: `Distance and noise layers are added together; centroid values at or above ${formatNumber(params.threshold)} become land.`,
       kind: "combined",
       signed: false,
       threshold: params.threshold,
@@ -560,11 +489,11 @@ function pushFieldReplayFrames(frames, settings, map, seaBorders, params, noiseS
   }
 }
 
-function pushTerrainFrame(frames, map, label, text, samplePoints) {
+function pushTerrainFrame(frames, map, label, text, centroids) {
   if (!frames) return;
 
   const frameMap = cloneDeepKeepFunctions(map);
-  frameMap.drawOverlay = createSamplePointsOverlayDraw(samplePoints);
+  frameMap.drawOverlay = createCentroidOverlayDraw(centroids);
   frames.push({label, text, map: frameMap});
 }
 
@@ -585,14 +514,14 @@ function createCoastFieldOverlayDraw({size, seaBorders, params, noiseSeed, layer
   };
 }
 
-function createSamplePointsOverlayDraw(samplePoints) {
-  const points = samplePoints.map((point) => ({x: point.x, y: point.y}));
-  return function drawSamplePointsOverlay(svg) {
+function createCentroidOverlayDraw(centroids) {
+  const points = centroids.map((point) => ({x: point.x, y: point.y}));
+  return function drawCentroidOverlay(svg) {
     const overlay = svg.getElementById("overlay");
     if (!overlay) return;
 
     for (const point of points) {
-      appendCircle(overlay, point.x, point.y, 3.5, "coast-sample-point");
+      appendCircle(overlay, point.x, point.y, 3.5, "coast-centroid-point");
     }
   };
 }
@@ -629,10 +558,6 @@ function createHeatmapCells(size, seaBorders, params, noiseSeed, layer) {
 }
 
 function valueForReplayLayer(layers, kind) {
-  if (kind.startsWith("extra:")) {
-    return layers.extra[Number(kind.split(":")[1])] ?? 0;
-  }
-
   return layers[kind] ?? 0;
 }
 

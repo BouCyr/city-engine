@@ -442,8 +442,6 @@ function createTwoCellCoastFixture(seed = "sea-land-test") {
     largeAmplitude: 0,
     mediumAmplitude: 0,
     smallAmplitude: 0,
-    extraNoise: [],
-    sampleCount: 1,
     smoothingPasses: 0,
     artifactsMax: 0,
   };
@@ -562,7 +560,6 @@ function validateCoastReplayDefaultFrames() {
     largeAmplitude: 0.18,
     mediumAmplitude: 0.08,
     smallAmplitude: 0.03,
-    sampleCount: 4,
     smoothingPasses: 1,
   };
 

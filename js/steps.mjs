@@ -63,8 +63,8 @@ export const steps = [
       `It stores terrain in <em>cell.type</em> and flags, updates every edge as <em>SEA</em>, <em>LAND</em>, or <em>COAST</em>, and then renders nodes as hidden for this terrain-only view.`,
     ],
     explanation: (settings, stepResult) => [
-      `Coast turns the pruned cell graph into terrain by measuring distance from the selected sea borders, then bending that distance field with deterministic large, medium, small, and optional extra noise layers.`,
-      `Each cell is sampled at its center, edge midpoints, and <em>${settings.coast.sampleCount}</em> deterministic interior points. If most samples meet the land threshold, the cell starts as <em>LAND</em>; otherwise it starts as <em>SEA</em>.`,
+      `Coast turns the pruned cell graph into terrain by measuring distance from the selected sea borders, then bending that distance field with deterministic large, medium, and small noise layers.`,
+      `Each cell is classified only from its centroid. If the centroid field value meets the land threshold, the cell starts as <em>LAND</em>; otherwise it starts as <em>SEA</em>.`,
       `The replay then shows each smoothing pass, artifact cleanup for tiny isolated components, and final edge classification. Edges between unlike terrain become <em>COAST</em>, while matching neighbors remain <em>SEA</em> or <em>LAND</em>.`,
       `The final Coast result contains <em>${stepResult?.map?.cells?.length ?? 0}</em> terrain cells and <em>${stepResult?.map?.edges?.length ?? 0}</em> classified edges.`,
     ],
