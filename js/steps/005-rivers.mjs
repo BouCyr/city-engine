@@ -78,11 +78,11 @@ export function computeRivers(settings, map) {
 
 
   const rivers = [...landMouthCandidates]
-    .map(mouth => calcRiver([mouth]));
+    .map(mouth => calcRiver(cloneRiver(null,mouth)));
 
-  const longestRiver = rivers.sort((a,b) => -a.length+b.length)[0];
+  const longestRiver = rivers.sort((a,b) => -a.cells.length+b.cells.length)[0];
 
-  longestRiver.forEach(c => c.draw = createDrawCellFn("none","0", "#2B8a"))
+  longestRiver.cells.forEach(c => c.draw = createDrawCellFn("none","0", "#2B8a"))
 
 
   return map;
@@ -90,19 +90,20 @@ export function computeRivers(settings, map) {
 
 function calcRiver(river){
 
-  const head = river[river.length-1];
+  const head = river.cells[river.cells.length-1];
   const end = hasNeighbor(head, n => !n).length > 0 ;
   // a boundary neighbor. The river ends here.
   if(end){
-    return [...river];
+    return river;
   }
 
   let nextCandidates =
     hasNeighbor(head, n => {
+      const notAlreadyInRiver = !river.cells.find(c => c.id === n.id);
       const isLand = n.type === "LAND";
       const farther = n.seaD > head.seaD;
       //TODO angle
-      return isLand && farther;
+      return notAlreadyInRiver && isLand && farther;
     });
 
   // pas de pente, on tente les plats
@@ -110,11 +111,11 @@ function calcRiver(river){
     nextCandidates =
       hasNeighbor(head, n => {
 
-        const notAlreadyInRiver = !river.find(c => c.id === n.id);
+        const notAlreadyInRiver = !river.cells.find(c => c.id === n.id);
         const isLand = n.type === "LAND";
-        const farther = n.seaD >= head.seaD;
+        const notCloser = n.seaD >= head.seaD;
 
-        return notAlreadyInRiver && isLand && farther;
+        return notAlreadyInRiver && isLand && notCloser;
       });
   }
 
@@ -123,16 +124,26 @@ function calcRiver(river){
   }
   const result = [];
   nextCandidates.forEach(c => {
-    result.push(calcRiver([...river, c]));
+    result.push(calcRiver(cloneRiver(river,c)));
   })
 
-  result.sort((a,b) => -a.length+b.length);
+  result.sort((a,b) => -a.cells.length+b.cells.length);
 
   return result[0];
 
 
 }
 
+function cloneRiver(river, next = undefined){
+  const cells = river?.cells ?? [];
+  const riverClone = {
+    cells:[...cells]
+  };
+  if(next){
+    riverClone.cells.push(next);
+  }
+  return riverClone;
+}
 
 
 function otherSide(e, cell) {
