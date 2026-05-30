@@ -3,7 +3,6 @@
 2. Rework settings opening
 3. Collapsable settings groups
 5. UI interaction
-6. Explanation/replay step
 7. Form style
 8. Scrollbar style
 ## Macro

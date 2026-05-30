@@ -9,7 +9,7 @@ export function Cell(id, edges, fill, drawFn = null, flags = []) {
   };
 }
 
-function createDrawCellFn(stroke = "none", strokeWidth = "0") {
+export function createDrawCellFn(stroke = "none", strokeWidth = "0", fill="none") {
   return function drawCell(svg) {
     const layer = svg.getElementById("cells");
     const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
@@ -20,6 +20,7 @@ function createDrawCellFn(stroke = "none", strokeWidth = "0") {
     polygon.setAttribute("class", "cell");
     polygon.setAttribute("points", points);
     polygon.setAttribute("stroke", stroke);
+    polygon.setAttribute("fill",fill);
     polygon.setAttribute("strokeWidth", strokeWidth);
 
     layer.appendChild(polygon);

@@ -3,6 +3,8 @@ import * as GATHER  from "./steps/001-gather.mjs";
 import * as LLOYD  from "./steps/002-lloyd.mjs";
 import * as PRUNE  from "./steps/003-prune.mjs";
 import * as SEA_LAND from "./steps/004-sea-land.mjs";
+import * as RIVERS from "./steps/005-rivers.mjs";
+import {computeRivers} from "./steps/005-rivers.mjs";
 
 export const steps = [
 
@@ -70,4 +72,20 @@ export const steps = [
     ],
     renderExplanationExtras: SEA_LAND.renderExplanationExtras,
   },
+  {
+    title:"Rivers",
+    process:RIVERS.computeRivers,
+    createReplay: null,
+    description: (settings, stepMap) => [
+      `This step classifies each current cell into <em>SEA</em> or <em>LAND</em> by combining a distance-from-sea-border field with layered deterministic noise.`,
+      `It stores terrain in <em>cell.type</em> and flags, updates every edge as <em>SEA</em>, <em>LAND</em>, or <em>COAST</em>, and then renders nodes as hidden for this terrain-only view.`,
+    ],
+    explanation: (settings, stepResult) => [
+      `Coast turns the pruned cell graph into terrain by measuring distance from the selected sea borders, then bending that distance field with deterministic large, medium, and small noise layers.`,
+      `Each cell is classified only from its centroid. If the centroid field value meets the land threshold, the cell starts as <em>LAND</em>; otherwise it starts as <em>SEA</em>.`,
+      `The replay then shows each smoothing pass, artifact cleanup for tiny isolated components, and final edge classification. Edges between unlike terrain become <em>COAST</em>, while matching neighbors remain <em>SEA</em> or <em>LAND</em>.`,
+      `The final Coast result contains <em>${stepResult?.map?.cells?.length ?? 0}</em> terrain cells and <em>${stepResult?.map?.edges?.length ?? 0}</em> classified edges.`,
+    ],
+    renderExplanationExtras: null,
+  }
 ]
