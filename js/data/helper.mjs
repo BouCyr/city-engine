@@ -12,6 +12,10 @@ export function distance(p1, p2) {
     return Math.sqrt(dx * dx + dy * dy);
 }
 
+export function edgeLength(edge) {
+  return distance(edge.start, edge.end);
+}
+
 /**
  * Calculate the middle point of two points.
  * @param {Object} p1 - Point with x and y fields.

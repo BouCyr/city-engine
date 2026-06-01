@@ -4,7 +4,8 @@ import * as LLOYD  from "./steps/002-lloyd.mjs";
 import * as PRUNE  from "./steps/003-prune.mjs";
 import * as SEA_LAND from "./steps/004-sea-land.mjs";
 import * as RIVERS from "./steps/005-rivers.mjs";
-import {computeRivers} from "./steps/005-rivers.mjs";
+import * as RIVERS2 from "./steps/005.2-rivers.mjs";
+
 
 export const steps = [
 
@@ -74,7 +75,7 @@ export const steps = [
   },
   {
     title:"Rivers",
-    process:RIVERS.computeRivers,
+    process:RIVERS2.computeRivers,
     createReplay: null,
     description: (settings, stepMap) => [
       `This step classifies each current cell into <em>SEA</em> or <em>LAND</em> by combining a distance-from-sea-border field with layered deterministic noise.`,

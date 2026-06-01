@@ -29,7 +29,7 @@ export function createDrawEdgeFn(edge, fill="none", stroke="#CCC", strokeWidth="
     path.setAttribute("d", `M ${start.x} ${start.y} L ${end.x} ${end.y}`);
     path.setAttribute("fill", fill);
     path.setAttribute("stroke", stroke);
-    path.setAttribute("strokeWidth",strokeWidth)
+    path.setAttribute("stroke-width",strokeWidth)
 
     layer.appendChild(path);
   }

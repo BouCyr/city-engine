@@ -28,6 +28,10 @@ export function createDrawCellFn(stroke = "none", strokeWidth = "0", fill="none"
 }
 
 export function orderedCellPoints(cell) {
+
+  if(!cell || !cell.edges)
+    throw new Error()
+
   if (cell.edges.length === 0) return [];
   if (cell.edges.length === 1) return [cell.edges[0].start, cell.edges[0].end];
 

@@ -8,7 +8,7 @@ export function computeRivers(settings, map) {
 
   //find the (land-side) coast
   const landCoast = map.cells.filter(c => c.type === "LAND")
-    .filter(c => hasNeighbor( c, n => {
+    .filter(c => filteredNeighbors( c, n => {
       if(!n || !n.type)
         return false;
       return n.type === "SEA"
@@ -22,7 +22,7 @@ export function computeRivers(settings, map) {
   while(current.size > 0){
     current.forEach(c => c.seaD = currentDist)
     const next = new Set();
-    current.forEach(c => neighborWithoutDistance(c).forEach(n => next.add(n)));
+    current.forEach(c => neighborWithNoSeaD(c).forEach(n => next.add(n)));
     currentDist += 1;
     current = next;
   }
@@ -41,7 +41,7 @@ export function computeRivers(settings, map) {
 
   //find the (sea-side) coast
   const seaCoast = map.cells.filter(c => c.type === "SEA")
-    .filter(c => hasNeighbor( c, n => {
+    .filter(c => filteredNeighbors( c, n => {
       if(!n || !n.type)
         return false;
       return n.type === "LAND"
@@ -54,7 +54,7 @@ export function computeRivers(settings, map) {
 
 
   //any sea cell touching at least 3 land cells may be the (sea-side) mouth
-  const seaMouthCandidates = seaCoast.filter(c => hasNeighbor( c, n => {
+  const seaMouthCandidates = seaCoast.filter(c => filteredNeighbors( c, n => {
     if(!n || !n.type)
       return false;
     return n.type === "LAND"
@@ -66,11 +66,13 @@ export function computeRivers(settings, map) {
 
   const landMouthCandidates = new Set();
   seaMouthCandidates
-    .map(c => hasNeighbor( c, n => {
+    .map(c => filteredNeighbors( c, n => {
       if(!n || !n.type)
         return false;
       return n.type === "LAND"}))
-    .forEach(c => landMouthCandidates.add(...c));
+    .forEach(c => {
+      c.forEach(c => landMouthCandidates.add(c));
+    });
 
   landMouthCandidates.forEach(c => {
     c.draw = createDrawCellFn("none","0", "#8B2a");
@@ -91,14 +93,14 @@ export function computeRivers(settings, map) {
 function calcRiver(river){
 
   const head = river.cells[river.cells.length-1];
-  const end = hasNeighbor(head, n => !n).length > 0 ;
+  const end = filteredNeighbors(head, n => !n).length > 0 ;
   // a boundary neighbor. The river ends here.
   if(end){
     return river;
   }
 
   let nextCandidates =
-    hasNeighbor(head, n => {
+    filteredNeighbors(head, n => {
       const notAlreadyInRiver = !river.cells.find(c => c.id === n.id);
       const isLand = n.type === "LAND";
       const farther = n.seaD > head.seaD;
@@ -107,17 +109,18 @@ function calcRiver(river){
     });
 
   // pas de pente, on tente les plats
-  if(nextCandidates.length === 0){
+ if(nextCandidates.length === 0 && river.cells.length > 2){
     nextCandidates =
-      hasNeighbor(head, n => {
+      filteredNeighbors(head, n => {
 
         const notAlreadyInRiver = !river.cells.find(c => c.id === n.id);
         const isLand = n.type === "LAND";
         const notCloser = n.seaD >= head.seaD;
-
+        //TODO angle
         return notAlreadyInRiver && isLand && notCloser;
       });
   }
+
 
   if(nextCandidates.length === 0){
     return river;
@@ -136,11 +139,17 @@ function calcRiver(river){
 
 function cloneRiver(river, next = undefined){
   const cells = river?.cells ?? [];
+  const numberOfUphillTurns = river?.numberOfUphillTurns ?? 0;
   const riverClone = {
-    cells:[...cells]
+    cells:[...cells],
+    numberOfUphillTurns: numberOfUphillTurns
   };
   if(next){
     riverClone.cells.push(next);
+
+    if(cells.length>0 && next.seaD > cells[cells.length-1].seaD){
+      riverClone.numberOfUphillTurns += 1;
+    }
   }
   return riverClone;
 }
@@ -150,7 +159,7 @@ function otherSide(e, cell) {
   return e.leftCell.id === cell.id ? e.rightCell : e.leftCell;
 }
 
-function hasNeighbor(cell, filterFunction) {
+function filteredNeighbors(cell, filterFunction) {
 
   const neighbors = [];
   cell.edges.forEach(e => {
@@ -163,7 +172,7 @@ function hasNeighbor(cell, filterFunction) {
 }
 
 
-function neighborWithoutDistance(cell){
+function neighborWithNoSeaD(cell){
   return cell.edges
     .map(e => otherSide(e, cell))
     .filter(c => {
