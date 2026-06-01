@@ -2,7 +2,7 @@ import {createDrawCellFn} from "../data/cell.mjs";
 import {createDrawEdgeFn} from "../data/edge.mjs";
 import * as H from "../data/helper.mjs";
 
-const MIN_EDGE_SIZE = 40;
+const MIN_EDGE_SIZE = 10;
 
 
 export function computeRivers(settings, map) {
