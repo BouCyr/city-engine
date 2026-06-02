@@ -11,7 +11,7 @@ const HEATMAP_GRID_SIZE = 48;
 
 const DEFAULT_COAST = {
   seaBorders: ["WEST"],
-  threshold: 0.28,
+  seaPercent: 0.28,
   largeScale: 900,
   mediumScale: 350,
   smallScale: 120,
@@ -58,7 +58,7 @@ function normalizeSettings(coastSettings) {
   return {
     ...DEFAULT_COAST,
     seaBorders: safeCoastSettings.seaBorders || DEFAULT_COAST.seaBorders,
-    threshold: Math.max(0, Math.min(1, toNumber(safeCoastSettings.threshold, DEFAULT_COAST.threshold))),
+    seaPercent: Math.max(0, Math.min(1, toNumber(safeCoastSettings.seaPercent, DEFAULT_COAST.seaPercent))),
     largeScale: toNumberArray(safeCoastSettings.largeScale, DEFAULT_COAST.largeScale),
     mediumScale: toNumberArray(safeCoastSettings.mediumScale, DEFAULT_COAST.mediumScale),
     smallScale: toNumberArray(safeCoastSettings.smallScale, DEFAULT_COAST.smallScale),
@@ -309,7 +309,7 @@ export function renderExplanationExtras(panel, settings) {
   table.appendChild(tbody);
 
   appendSummaryRow(tbody, "Sea borders", seaBorders.join(", ") || "WEST");
-  appendSummaryRow(tbody, "Land threshold", createThresholdSummary(params.threshold));
+  appendSummaryRow(tbody, "Sea percentage", createThresholdSummary(params.seaPercent));
   appendSummaryRow(tbody, "Large noise", `${params.largeScale} scale, ${formatNumber(params.largeAmplitude)} amplitude`);
   appendSummaryRow(tbody, "Medium noise", `${params.mediumScale} scale, ${formatNumber(params.mediumAmplitude)} amplitude`);
   appendSummaryRow(tbody, "Small noise", `${params.smallScale} scale, ${formatNumber(params.smallAmplitude)} amplitude`);
@@ -331,25 +331,40 @@ function buildCoast(settings, map, options = {}) {
     text: "Coast starts from the pruned cell graph before any terrain is assigned.",
     map: cloneDeepKeepFunctions(map),
   }] : null;
-  const centroids = [];
-
   if (frames) {
     pushFieldReplayFrames(frames, settings, map, seaBorders, params, noiseSeed);
   }
 
-  map.cells.forEach((cell) => {
+  // 1. Calculate field values for all cell centroids
+  const cellFields = map.cells.map((cell) => {
     const points = orderedCellPoints(cell);
     const centroid = centerPoint(points);
-    centroids.push(centroid);
-    const terrain = fieldAt(centroid, map.size, seaBorders, params, noiseSeed) >= params.threshold
-      ? TERRAIN_LAND
-      : TERRAIN_SEA;
+    return {
+      cell,
+      centroid,
+      value: fieldAt(centroid, map.size, seaBorders, params, noiseSeed),
+    };
+  });
+
+  // 2. Determine dynamic threshold for the LOWEST % sea
+  const sortedValues = cellFields.map(cf => cf.value).sort((a, b) => a - b);
+  const seaCount = Math.floor(params.seaPercent * map.cells.length);
+  // Threshold is the value at the boundary of the sea percentage
+  const dynamicThreshold = seaCount > 0 ? sortedValues[seaCount - 1] : -Infinity;
+
+  // Store the calculated threshold for UI and Replay consistency
+  params.threshold = dynamicThreshold;
+
+  // 3. Classify cells (Lowest values are SEA)
+  cellFields.forEach(({cell, value}) => {
+    const terrain = value < dynamicThreshold ? TERRAIN_SEA : TERRAIN_LAND;
     cell.type = terrain;
     setTerrainFlags(cell, terrain);
     cell.draw = null;
   });
   rebuildTerrainAreas(map);
 
+  const centroids = cellFields.map(cf => cf.centroid);
   pushTerrainFrame(frames, map, "Initial terrain", "Cells are classified from each centroid's field value before neighbor smoothing.", centroids);
 
   for (let pass = 0; pass < passes; pass += 1) {
@@ -492,7 +507,7 @@ function pushFieldReplayFrames(frames, settings, map, seaBorders, params, noiseS
     },
     {
       label: "Combined field",
-      text: `Distance and noise layers are added together; centroid values at or above ${formatNumber(params.threshold)} become land.`,
+      text: `Distance and noise layers are added together; the ${Math.round(params.seaPercent * 100)}% of cells closest to sea borders (lowest values) become sea.`,
       kind: "combined",
       signed: false,
       threshold: params.threshold,
@@ -616,7 +631,7 @@ function heatmapFill(value, layer, maxAbs) {
   }
 
   if (Number.isFinite(layer.threshold)) {
-    return value >= layer.threshold ? "rgb(180, 173, 112)" : "rgb(74, 147, 179)";
+    return value < layer.threshold ? "rgb(74, 147, 179)" : "rgb(180, 173, 112)";
   }
 
   const normalized = Math.max(0, Math.min(1, value));
