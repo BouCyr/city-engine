@@ -55,7 +55,7 @@ export function computeRivers(settings, map) {
           return false;
 
         return n.seaD > currentCell.seaD;
-      }).sort((a, b) => b.seaD - a.seaD)[0];
+      }).sort((a, b) => a.seaD - b.seaD)[0];
       if (!next) {
         break;
       }
