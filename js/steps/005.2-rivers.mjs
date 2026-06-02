@@ -4,28 +4,44 @@ import * as H from "../data/helper.mjs";
 
 const MIN_EDGE_SIZE = 50;
 
-
 export function computeRivers(settings, map) {
 
 
+  flagShortEdges(map);
+  //compute distance to land
+  distanceToSea(map);
+  //find land mouths candidates
+  const landMouthCandidates = findMouthCandidates(map);
+  landMouthCandidates.forEach(c => {
+    c.draw = createDrawCellFn("none","0", "#8B2a");
+
+  });
+
+
+  const rivers = riverFromMouth(landMouthCandidates);
+  const longestRiver = rivers.sort((a, b) => b.length-a.length)[0]
+
+
+  drawRiver(longestRiver, map);
+
+
+  return map;
+}
+
+
+
+function flagShortEdges(map) {
   map.edges
     .filter(e => e.flags.has("LAND"))
     .filter(e => {
       return H.distance(e.start, e.end) < MIN_EDGE_SIZE;
     })
-    .forEach(e => {e.draw = createDrawEdgeFn(e, "none", "red", "7")})
+    .forEach(e => {
+      e.draw = createDrawEdgeFn(e, "none", "red", "7")
+    })
+}
 
-
-  //compute distance to land
-  distanceToSea(map);
-  //find land mouths candidates
-  const landMouthCandidates = findMouthCandidates(map);
-
-  landMouthCandidates.forEach(c => {
-    c.draw = createDrawCellFn("none","0", "#8B2a");
-  });
-
-
+function riverFromMouth(landMouthCandidates) {
   const rivers = [];
   landMouthCandidates.forEach(c => {
     let currentCell = c;
@@ -33,7 +49,7 @@ export function computeRivers(settings, map) {
     while (true) {
 
       //river stop when reaching boundary
-      if(currentCell.edges.find(e => e.flags.has("Boundary"))){
+      if (currentCell.edges.find(e => e.flags.has("Boundary"))) {
         break;
       }
 
@@ -46,7 +62,7 @@ export function computeRivers(settings, map) {
           return false;
 
         // no other cell in river next to the sea
-        if(n.edges.find(e => e.flags.has("COAST"))){
+        if (n.edges.find(e => e.flags.has("COAST"))) {
           return false;
         }
 
@@ -64,12 +80,7 @@ export function computeRivers(settings, map) {
     }
     rivers.push(river);
   })
-
-  const river = rivers.sort((a, b) => b.length-a.length)[0]
-  drawRiver(river, map);
-
-
-  return map;
+  return rivers;
 }
 
 function findMouthCandidates(map) {
@@ -185,7 +196,7 @@ function filteredNeighbors(cell, filterFunction) {
 
 
 
-function drawRiver(river, map) {
+function drawRiver(river, map, color="blue") {
   const seaMouth = filteredNeighbors(river[0], n => {
     return n.type === "SEA"
   })[0];
@@ -215,11 +226,16 @@ function drawRiver(river, map) {
 
   }
 
+  const prevOverlayDraw = map.drawOverlay;
   map.drawOverlay = (svg) => {
+
+    if(prevOverlayDraw){
+      prevOverlayDraw(svg);
+    }
     const layer = svg.getElementById("cells");
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("fill", "none");
-    path.setAttribute("stroke", "blue");
+    path.setAttribute("stroke", color);
     path.setAttribute("stroke-width", "7")
     path.setAttribute("d", d);
     layer.appendChild(path);
