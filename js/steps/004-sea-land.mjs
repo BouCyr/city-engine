@@ -415,6 +415,9 @@ function buildCoast(settings, map, options = {}) {
   rebuildTerrainAreas(map);
   pushTerrainFrame(frames, map, "Artifact cleanup", "Tiny isolated terrain components are flipped unless they touch a selected sea border.", centroids);
 
+  applyGridSeaCorrection(map, seaBorders);
+  pushTerrainFrame(frames, map, "Grid correction", "Sea/Land classification is refined using a 3x3 grid logic near boundaries.", centroids);
+
   for (const edge of map.edges) {
     const terrain = classifyEdgeTerrain(edge, seaBorders, map.size);
     setTerrainFlags(edge, terrain);
@@ -679,6 +682,71 @@ function appendCircle(layer, cx, cy, r, className) {
   circle.setAttribute("r", r);
   circle.setAttribute("class", className);
   layer.appendChild(circle);
+}
+
+function applyGridSeaCorrection(map, seaBorders) {
+  const size = map.size;
+  const gridCount = 3;
+  const squareSize = size / gridCount;
+
+  // 1. Initialize 3x3 grid counters
+  const grid = Array.from({ length: gridCount }, () => Array(gridCount).fill(0));
+
+  // 2. Increment counters based on touching sea/land sides
+  if (seaBorders.has("south")) {
+    for (let x = 0; x < gridCount; x++) grid[x][2] += 2;
+  }
+  if (seaBorders.has("north")) {
+    for (let x = 0; x < gridCount; x++) grid[x][0] += 2;
+  }
+  if (seaBorders.has("west")) {
+    for (let y = 0; y < gridCount; y++) grid[0][y] += 2;
+  }
+  if (seaBorders.has("east")) {
+    for (let y = 0; y < gridCount; y++) grid[2][y] += 2;
+  }
+
+  // Decrement for land sides
+  if (!seaBorders.has("south")) {
+    for (let x = 0; x < gridCount; x++) grid[x][2] -= 1;
+  }
+  if (!seaBorders.has("north")) {
+    for (let x = 0; x < gridCount; x++) grid[x][0] -= 1;
+  }
+  if (!seaBorders.has("west")) {
+    for (let y = 0; y < gridCount; y++) grid[0][y] -= 1;
+  }
+  if (!seaBorders.has("east")) {
+    for (let y = 0; y < gridCount; y++) grid[2][y] -= 1;
+  }
+
+  // 3. Apply corrections
+  for (const cell of map.cells) {
+    const points = orderedCellPoints(cell);
+    const centroid = centerPoint(points);
+    const gx = Math.min(gridCount - 1, Math.floor(centroid.x / squareSize));
+    const gy = Math.min(gridCount - 1, Math.floor(centroid.y / squareSize));
+    const counter = grid[gx][gy];
+
+    const hasBoundaryEdge = cell.edges.some(e => e.flags && e.flags.has("Boundary"));
+    const hasNeighborNextToBoundary = cell.edges.some(e => {
+      const neighbor = (e.leftCell === cell) ? e.rightCell : e.leftCell;
+      return neighbor && neighbor.edges.some(ne => ne.flags && ne.flags.has("Boundary"));
+    });
+
+    let mustBeSea = false;
+    if (counter === 2 && hasBoundaryEdge) {
+      mustBeSea = true;
+    } else if (counter === 4 && (hasBoundaryEdge || hasNeighborNextToBoundary)) {
+      mustBeSea = true;
+    }
+
+    if (mustBeSea) {
+      cell.type = TERRAIN_SEA;
+      setTerrainFlags(cell, TERRAIN_SEA);
+    }
+  }
+  rebuildTerrainAreas(map);
 }
 
 function formatNumber(value) {

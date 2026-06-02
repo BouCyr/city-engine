@@ -16,7 +16,7 @@ Input is a map with cells and edges. Settings come from `settings.coast` and `se
 
 ## Algorithm
 
-The step normalizes coast settings and sea borders, derives a numeric noise seed from the step RNG, computes each cell centroid, and classifies the cell by whether the centroid field value exceeds the land threshold. The field combines distance from the selected sea borders with large, medium, and small deterministic noise layers. It optionally smooths terrain by weighted neighboring edge length, removes tiny isolated terrain artifacts, classifies each edge from adjacent terrain or inferred boundary terrain, and updates flags and draw functions.
+The step normalizes coast settings and sea borders, derives a numeric noise seed from the step RNG, computes each cell centroid, and classifies the cell by whether the centroid field value exceeds the land threshold. The field combines distance from the selected sea borders with large, medium, and small deterministic noise layers. It optionally smooths terrain by weighted neighboring edge length, removes tiny isolated terrain artifacts, and applies a grid-based boundary sea correction logic. Finally, it classifies each edge from adjacent terrain or inferred boundary terrain, and updates flags and draw functions.
 
 ## Mutation And Identity
 
