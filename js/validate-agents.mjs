@@ -23,6 +23,8 @@ import {classifySeaLand, coastLayersAt, createReplay as createCoastReplay, TERRA
 import {computeRivers as computeLegacyRivers, MIN_EDGE_SIZE, selectRiver} from "./steps/005-rivers.mjs";
 import {
   computeRivers as computeAStarRivers,
+  createReplay as createAStarRiversReplay,
+  drawRiver,
   findAStarPath,
   findBestAStarRiver,
   findMouthCandidates,
@@ -860,6 +862,27 @@ function validateAStarRiversComputeDistanceFromInnerSeas() {
   assert.equal(innerAdjacentLand.toSea, innerSea);
 }
 
+function validateAStarRiversSeaDIgnoresMinimumEdgeSize() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 8,
+    height: 5,
+    sea: [[0, 2]],
+    seed: "river-astar-sead-short-edge",
+  });
+  const firstLand = map.cells.find(cell => cell.id === "c-1-2");
+  const nextLand = map.cells.find(cell => cell.id === "c-2-2");
+  makeSharedCellEdgeShorterThanMinimum(firstLand, nextLand);
+
+  const result = computeAStarRivers({
+    ...settings,
+    rng: settings.createStepRng("Rivers"),
+  }, map);
+
+  assert.equal(firstLand.seaD, 1);
+  assert.equal(nextLand.seaD, 2);
+  assert.equal(result.cells.find(cell => cell.id === "c-2-2").seaD, 2);
+}
+
 function validateAStarRiverRejectsShortCoastMouthEdges() {
   const {map} = createGridTerrainFixture({
     width: 3,
@@ -1056,6 +1079,77 @@ function validateAStarRiverSelectedIsMouthExitDistanceWinner() {
   const selected = selectSelectedRiver([byCellCount, byPathCost, byMouthExitDistance]);
 
   assert.equal(selected, byMouthExitDistance);
+}
+
+function validateAStarRiverDrawsOnlyCurvedPath() {
+  const {map} = createGridTerrainFixture({
+    width: 3,
+    height: 2,
+    sea: [[0, 1]],
+    seed: "river-astar-draw-curves",
+  });
+  const byId = id => map.cells.find(cell => cell.id === id);
+  const candidate = {
+    originalMouth: byId("c-1-1"),
+    riverCells: [byId("c-1-1"), byId("c-2-1")],
+  };
+  const {calls, svg} = createSvgProbe();
+
+  drawRiver(candidate, map, "var(--sea-edge)");
+  map.drawOverlay(svg);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].attrs["stroke-opacity"], "1");
+  assert.equal(calls[0].attrs.d.includes(" L "), false);
+  assert.ok(calls[0].attrs.d.includes(" Q "));
+  assert.equal(calls[0].attrs.stroke, "var(--sea-edge)");
+}
+
+function validateAStarRiversReplayFrames() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 8,
+    height: 5,
+    sea: [[0, 2], [4, 2]],
+    seed: "river-astar-replay",
+  });
+
+  const replay = createAStarRiversReplay({
+    ...settings,
+    rng: settings.createStepRng("Rivers"),
+  }, map);
+
+  assert.deepEqual(replay.frames.map(frame => frame.label), [
+    "SeaD threshold",
+    "Mouth computation",
+    "Exit computation",
+    "Forbidden edges",
+    "Failed river attempt",
+    "Valid unselected river",
+    "Selected river",
+  ]);
+  assert.ok(replay.frames.every(frame => frame.overlay?.type === "rivers"));
+  assert.ok(replay.frames[0].overlay.polygons.length > 0);
+  assert.ok(replay.frames[1].overlay.arrows.length > replay.frames[0].overlay.arrows.length);
+  assert.ok(replay.frames[1].overlay.arrows.every(arrow => arrow.stroke === "black"));
+  assert.ok(replay.frames[2].overlay.arrows.length > replay.frames[1].overlay.arrows.length);
+  assert.ok(replay.frames[3].overlay.lines.length >= replay.frames[2].overlay.lines.length);
+  assert.ok(replay.frames[4].overlay.paths.length >= replay.frames[3].overlay.paths.length);
+  if (replay.frames[4].overlay.paths.length > replay.frames[3].overlay.paths.length) {
+    assert.ok(replay.frames[4].overlay.paths.at(-1).d.includes(" Q "));
+    assert.ok(replay.frames[4].overlay.paths.every(path => path.stroke === "var(--sea-edge)"));
+  }
+  if (replay.frames[6].overlay.paths.length > 1) {
+    assert.ok(replay.frames[6].overlay.paths.slice(0, -1).every(path => path.opacity === 0.25));
+    assert.equal(replay.frames[6].overlay.paths.at(-1).opacity, 1);
+  }
+
+  const hydrated = hydrateReplay(serializeReplay(replay));
+  const mouthFrame = hydrated.frames[0];
+  const {calls, svg} = createSvgProbe();
+  mouthFrame.map.drawOverlay(svg);
+
+  assert.ok(calls.length > 0);
+  assert.ok(calls.some(call => call.name === "polygon"));
 }
 
 function validateCoastReplayMatchesFinalClassification() {
@@ -1298,6 +1392,7 @@ validateRiversRejectShortEdges();
 validateRiverSelectionFallsBackToNearestBankRatio();
 validateAStarRiversRegisteredInPipeline();
 validateAStarRiversComputeDistanceFromInnerSeas();
+validateAStarRiversSeaDIgnoresMinimumEdgeSize();
 validateAStarRiverRejectsShortCoastMouthEdges();
 validateAStarRiverRejectsShortEdges();
 validateAStarRiverRequiresInitialSeaDIncrease();
@@ -1306,6 +1401,8 @@ validateAStarRiverFailsOnIntermediateBoundaryCell();
 validateAStarRiverFallsBackFromBlockedFarthestExit();
 validateAStarRiverSelectsLongestMouthExitDistance();
 validateAStarRiverSelectedIsMouthExitDistanceWinner();
+validateAStarRiverDrawsOnlyCurvedPath();
+validateAStarRiversReplayFrames();
 validateCoastReplayMatchesFinalClassification();
 validateCoastReplayDefaultFrames();
 validateCoastReplayOverlayIsolation();

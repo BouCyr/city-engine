@@ -1,4 +1,5 @@
-import {createDrawCellFn} from "../data/cell.mjs";
+import {createDrawCellFn, orderedCellPoints} from "../data/cell.mjs";
+import {cloneDeepKeepFunctions} from "../data/clone.mjs";
 import {createDrawEdgeFn} from "../data/edge.mjs";
 import * as H from "../data/helper.mjs";
 
@@ -18,7 +19,6 @@ export function computeRivers(settings, map) {
   console.info("Rivers A*: starting");
 
   clearRiverState(map);
-  flagShortEdges(map);
 
   const seaComponents = classifySeaComponents(map);
   if (seaComponents.length === 0) {
@@ -91,6 +91,62 @@ export function computeRivers(settings, map) {
   return map;
 }
 
+export function createReplay(settings, inputMap) {
+  const map = cloneDeepKeepFunctions(inputMap);
+  clearRiverState(map);
+
+  const seaComponents = classifySeaComponents(map);
+  const landComponents = connectedComponents(map.cells.filter(cell => cell.type === "LAND"), landNeighbors);
+  const selectedLandmass = largestComponent(landComponents);
+  const selectedLandSet = new Set(selectedLandmass);
+  const openSeaComponents = seaComponents.filter(component => component.kind === OPEN_SEA);
+
+  if (seaComponents.length === 0 || selectedLandmass.length === 0 || openSeaComponents.length === 0) {
+    return {frames: [{label: "Before rivers", text: "Rivers cannot be replayed without sea and land cells.", map}]};
+  }
+
+  computeDistanceFromSea(selectedLandmass, selectedLandSet, seaComponents);
+
+  const exitCells = selectedLandmass
+    .filter(cell => cell.seaD >= MIN_EXIT_OPEN_SEA_DISTANCE)
+    .filter(cell => cell.edges.some(edge => edge.flags?.has("Boundary")));
+  const mouthCandidates = findMouthCandidates(map, seaComponents)
+    .filter(mouth => selectedLandSet.has(mouth.cell));
+  const openMouths = mouthCandidates
+    .filter(mouth => mouth.seaComponent?.kind === OPEN_SEA);
+  const attempts = collectReplayRiverAttempts({
+    openMouths,
+    exitCells,
+    selectedLandSet,
+    mapSize: map.size,
+  });
+  const overlay = emptyRiverReplayOverlaySpec();
+  const frames = [];
+
+  appendRiverReplayOverlay(overlay, {lowSeaDCells: selectedLandmass.filter(cell => (cell.seaD ?? 0) < MIN_LOCKED_SEA_DISTANCE)});
+  frames.push(replayFrame(map, "SeaD threshold", "Cells below the sea-distance threshold used for initial direction and sea avoidance are highlighted.", overlay));
+
+  appendRiverReplayOverlay(overlay, {mouths: openMouths});
+  frames.push(replayFrame(map, "Mouth computation", "Eligible land mouths adjacent to open sea are highlighted.", overlay));
+
+  appendRiverReplayOverlay(overlay, {exits: exitCells});
+  frames.push(replayFrame(map, "Exit computation", "Boundary exit cells far enough from any sea are highlighted.", overlay));
+
+  appendRiverReplayOverlay(overlay, {forbiddenEdges: forbiddenRiverEdges(map)});
+  frames.push(replayFrame(map, "Forbidden edges", "Land edges too short for rivers to cross are highlighted.", overlay));
+
+  appendRiverReplayOverlay(overlay, {river: attempts.failed});
+  frames.push(replayFrame(map, "Failed river attempt", "One attempted route does not reach its target exit.", overlay));
+
+  appendRiverReplayOverlay(overlay, {river: attempts.unselected});
+  frames.push(replayFrame(map, "Valid unselected river", "One valid route reaches its exit but is not selected.", overlay));
+
+  appendRiverReplayOverlay(overlay, {river: attempts.selected});
+  frames.push(replayFrame(map, "Selected river", "The selected route has the longest straight mouth-to-exit distance.", overlay));
+
+  return {frames};
+}
+
 export function findBestAStarRiver({openMouths, exitCells, selectedLandSet, mapSize, deadline = Infinity}) {
   const sortedMouths = [...openMouths].sort((a, b) => compareMouthsByCenterDesc(a, b, mapSize));
   const validRivers = [];
@@ -127,9 +183,216 @@ export function findBestAStarRiver({openMouths, exitCells, selectedLandSet, mapS
   };
 }
 
+function collectReplayRiverAttempts({openMouths, exitCells, selectedLandSet, mapSize}) {
+  const validRivers = [];
+  let failed = null;
+
+  const sortedMouths = [...openMouths].sort((a, b) => compareMouthsByCenterDesc(a, b, mapSize));
+  for (const mouth of sortedMouths) {
+    const sortedExits = [...exitCells].sort((a, b) => compareExitsFromMouthDesc(a, b, mouth));
+    for (const exit of sortedExits) {
+      const result = findAStarPathDetailed({mouth, exit, selectedLandSet});
+      if (result.candidate) {
+        validRivers.push(result.candidate);
+      } else if (!failed && result.partial?.riverCells?.length > 1) {
+        failed = result.partial;
+      }
+    }
+  }
+
+  const selected = selectSelectedRiver(validRivers);
+  if (!failed && selected?.riverCells?.length > 2) {
+    failed = {
+      ...selected,
+      riverCells: selected.riverCells.slice(0, -1),
+    };
+  }
+  const unselected = validRivers.find(candidate => candidate !== selected) ?? null;
+
+  return {failed, unselected, selected};
+}
+
+function replayFrame(map, label, text, overlay) {
+  const frameMap = cloneDeepKeepFunctions(map);
+  const frameOverlay = cloneRiverReplayOverlaySpec(overlay);
+  frameMap.drawOverlay = createRiverReplayOverlayDraw(frameOverlay);
+  return {label, text, map: frameMap, overlay: frameOverlay};
+}
+
+function emptyRiverReplayOverlaySpec() {
+  return {
+    type: "rivers",
+    polygons: [],
+    arrows: [],
+    lines: [],
+    paths: [],
+  };
+}
+
+function cloneRiverReplayOverlaySpec(overlay) {
+  return {
+    type: "rivers",
+    polygons: (overlay.polygons ?? []).map(polygon => ({...polygon, points: (polygon.points ?? []).map(point => ({...point}))})),
+    arrows: (overlay.arrows ?? []).map(arrow => ({...arrow})),
+    lines: (overlay.lines ?? []).map(line => ({...line})),
+    paths: (overlay.paths ?? []).map(path => ({...path})),
+  };
+}
+
+function appendRiverReplayOverlay(overlay, {lowSeaDCells = [], mouths = [], exits = [], forbiddenEdges = [], river = null}) {
+  overlay.polygons.push(...lowSeaDCells.map(cell => ({
+    points: orderedCellPoints(cell).map(point => ({x: point.x, y: point.y})),
+    fill: "rgba(239, 68, 68, 0.22)",
+    stroke: "none",
+  })));
+
+  overlay.arrows.push(...mouths.map(mouth => {
+    const start = H.cellCentroid(mouth.seaCell);
+    const end = H.cellCentroid(mouth.cell);
+    return {
+      x1: start.x,
+      y1: start.y,
+      x2: end.x,
+      y2: end.y,
+      stroke: "black",
+      strokeWidth: 7,
+    };
+  }));
+
+  overlay.arrows.push(...exits.map(exit => {
+    const start = H.cellCentroid(exit);
+    const edge = exit.edges.find(candidate => candidate.flags?.has("Boundary"));
+    const end = edge ? H.midpoint(edge.start, edge.end) : start;
+    return {
+      x1: start.x,
+      y1: start.y,
+      x2: end.x,
+      y2: end.y,
+      stroke: "black",
+      strokeWidth: 7,
+    };
+  }));
+
+  overlay.lines.push(...forbiddenEdges.map(edge => ({
+      x1: edge.start.x,
+      y1: edge.start.y,
+      x2: edge.end.x,
+      y2: edge.end.y,
+      stroke: "red",
+      strokeWidth: 7,
+    })));
+
+  if (river) {
+    overlay.paths.forEach(path => {
+      path.opacity = 0.25;
+    });
+    overlay.paths.push({
+      d: buildCurvedRiverPath(river),
+      stroke: RIVER_COLOR,
+      strokeWidth: 7,
+      opacity: 1,
+    });
+  }
+}
+
+function createRiverReplayOverlayDraw(overlay) {
+  return function drawRiverReplayOverlay(svg) {
+    const layer = svg.getElementById("overlay") ?? svg.getElementById("cells");
+    if (!layer) return;
+    drawRiverReplayOverlaySpec(layer, overlay);
+  };
+}
+
+function drawRiverReplayOverlaySpec(layer, overlay) {
+  for (const polygon of overlay.polygons ?? []) {
+    const element = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    element.setAttribute("points", polygon.points.map(point => `${point.x},${point.y}`).join(" "));
+    element.setAttribute("fill", polygon.fill);
+    element.setAttribute("stroke", polygon.stroke);
+    layer.appendChild(element);
+  }
+
+  for (const arrow of overlay.arrows ?? []) {
+    appendReplayArrow(layer, arrow);
+  }
+
+  for (const line of overlay.lines ?? []) {
+    const element = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    element.setAttribute("x1", line.x1);
+    element.setAttribute("y1", line.y1);
+    element.setAttribute("x2", line.x2);
+    element.setAttribute("y2", line.y2);
+    element.setAttribute("stroke", line.stroke);
+    element.setAttribute("stroke-width", line.strokeWidth);
+    layer.appendChild(element);
+  }
+
+  for (const path of overlay.paths ?? []) {
+    const element = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    element.setAttribute("fill", "none");
+    element.setAttribute("stroke", path.stroke);
+    element.setAttribute("stroke-width", path.strokeWidth);
+    element.setAttribute("stroke-opacity", path.opacity);
+    element.setAttribute("d", path.d);
+    layer.appendChild(element);
+  }
+}
+
+function appendReplayArrow(layer, arrow) {
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", arrow.x1);
+  line.setAttribute("y1", arrow.y1);
+  line.setAttribute("x2", arrow.x2);
+  line.setAttribute("y2", arrow.y2);
+  line.setAttribute("stroke", arrow.stroke);
+  line.setAttribute("stroke-width", arrow.strokeWidth);
+  layer.appendChild(line);
+
+  const head = replayArrowHead(arrow);
+  if (!head) return;
+
+  const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+  polygon.setAttribute("points", head.map(point => `${point.x},${point.y}`).join(" "));
+  polygon.setAttribute("fill", arrow.stroke);
+  layer.appendChild(polygon);
+}
+
+function replayArrowHead({x1, y1, x2, y2}) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return null;
+
+  const ux = dx / length;
+  const uy = dy / length;
+  const size = 16;
+  const width = 9;
+  const baseX = x2 - ux * size;
+  const baseY = y2 - uy * size;
+  const px = -uy * width;
+  const py = ux * width;
+  return [
+    {x: x2, y: y2},
+    {x: baseX + px, y: baseY + py},
+    {x: baseX - px, y: baseY - py},
+  ];
+}
+
+function forbiddenRiverEdges(map) {
+  return map.edges
+    .filter(edge => edge.flags?.has("LAND"))
+    .filter(edge => H.edgeLength(edge) <= MIN_EDGE_SIZE);
+}
+
 export function findAStarPath({mouth, exit, selectedLandSet}) {
+  return findAStarPathDetailed({mouth, exit, selectedLandSet}).candidate;
+}
+
+function findAStarPathDetailed({mouth, exit, selectedLandSet}) {
   const start = mouth.cell;
-  if (!selectedLandSet.has(start) || !selectedLandSet.has(exit)) return null;
+  if (!selectedLandSet.has(start) || !selectedLandSet.has(exit)) {
+    return {candidate: null, partial: null};
+  }
 
   const startState = {
     cell: start,
@@ -144,14 +407,18 @@ export function findAStarPath({mouth, exit, selectedLandSet}) {
   const gScore = new Map([[startKey, 0]]);
   const fScore = new Map([[startKey, H.distance(H.cellCentroid(start), H.cellCentroid(exit))]]);
   const closed = new Set();
+  let bestPartialKey = startKey;
 
   while (open.size > 0) {
     const currentKey = lowestScoreState(open, fScore, states);
     const currentState = states.get(currentKey);
     const current = currentState.cell;
+    if (isBetterPartial(currentKey, bestPartialKey, states, gScore, exit)) {
+      bestPartialKey = currentKey;
+    }
     if (current === exit) {
       const riverCells = reconstructPath(cameFrom, states, currentKey);
-      return {
+      const candidate = {
         riverCells,
         pathCost: gScore.get(currentKey),
         mouthExitDistance: mouthExitDistance(mouth, exit),
@@ -159,6 +426,7 @@ export function findAStarPath({mouth, exit, selectedLandSet}) {
         originalMouth: start,
         exit,
       };
+      return {candidate, partial: candidate};
     }
 
     open.delete(currentKey);
@@ -192,7 +460,10 @@ export function findAStarPath({mouth, exit, selectedLandSet}) {
     }
   }
 
-  return null;
+  return {
+    candidate: null,
+    partial: buildPartialCandidate(cameFrom, states, bestPartialKey, gScore, mouth, exit),
+  };
 }
 
 function clearRiverState(map) {
@@ -278,7 +549,6 @@ export function findMouthCandidates(map, seaComponents) {
       const key = `${landCell.id}:${seaCell.id}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      landCell.draw = createDrawCellFn("none", "0", "#8B2a");
       mouths.push({cell: landCell, seaCell, seaComponent});
     }
   }
@@ -318,6 +588,29 @@ function reconstructPath(cameFrom, states, currentKey) {
   return path;
 }
 
+function buildPartialCandidate(cameFrom, states, currentKey, gScore, mouth, exit) {
+  if (!currentKey) return null;
+  const riverCells = reconstructPath(cameFrom, states, currentKey);
+  return {
+    riverCells,
+    pathCost: gScore.get(currentKey) ?? 0,
+    mouthExitDistance: mouthExitDistance(mouth, exit),
+    mouth,
+    originalMouth: mouth.cell,
+    exit,
+  };
+}
+
+function isBetterPartial(candidateKey, currentKey, states, gScore, exit) {
+  if (!currentKey) return true;
+  const candidateState = states.get(candidateKey);
+  const currentState = states.get(currentKey);
+  const candidateDistance = H.distance(H.cellCentroid(candidateState.cell), H.cellCentroid(exit));
+  const currentDistance = H.distance(H.cellCentroid(currentState.cell), H.cellCentroid(exit));
+  return candidateDistance < currentDistance
+    || candidateDistance === currentDistance && (gScore.get(candidateKey) ?? 0) > (gScore.get(currentKey) ?? 0);
+}
+
 function pathStateKey(state) {
   return `${state.cell.id}:${state.steps}:${state.lockedAwayFromSea ? 1 : 0}`;
 }
@@ -346,33 +639,69 @@ function formatRiver(candidate) {
     `${Math.round(candidate.mouthExitDistance * 10) / 10} mouth-exit distance`;
 }
 
-function drawRiver(candidate, map, color = "blue") {
+export function drawRiver(candidate, map, color = "blue") {
   if (!candidate) return;
-  const points = [];
-  const firstMouth = candidate.originalMouth;
-  const firstSea = typedNeighbors(firstMouth, "SEA")[0]?.cell;
-  const firstMouthEdge = H.cellsEdge(firstSea, firstMouth);
-  if (firstMouthEdge) points.push(H.midpoint(firstMouthEdge.start, firstMouthEdge.end));
-
-  candidate.riverCells.forEach(cell => points.push(H.cellCentroid(cell)));
-  const exit = candidate.riverCells.at(-1)?.edges.find(edge => edge.flags?.has("Boundary"));
-  if (exit) points.push(H.midpoint(exit.start, exit.end));
-
-  const d = points.length > 0
-    ? `M ${points.map(point => `${point.x} ${point.y}`).join(" L ")}`
-    : "";
+  const curvedPath = buildCurvedRiverPath(candidate);
   const prevOverlayDraw = map.drawOverlay;
   map.drawOverlay = (svg) => {
     if (prevOverlayDraw) prevOverlayDraw(svg);
     const layer = svg.getElementById("cells");
-    if (!layer || !d) return;
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("fill", "none");
-    path.setAttribute("stroke", color);
-    path.setAttribute("stroke-width", "7");
-    path.setAttribute("d", d);
-    layer.appendChild(path);
+    if (!layer) return;
+    appendRiverPath(layer, curvedPath, color, "1");
   };
+}
+
+function buildCurvedRiverPath(candidate) {
+  const cells = candidate.riverCells;
+  if (cells.length === 0) return "";
+
+  const segments = [];
+  const entry = riverEntryPoint(candidate) ?? H.cellCentroid(cells[0]);
+  segments.push(`M ${entry.x} ${entry.y}`);
+
+  for (let index = 0; index < cells.length; index += 1) {
+    const current = cells[index];
+    const nextPoint = cellRiverExitPoint(candidate, index);
+    if (!nextPoint) continue;
+    const control = H.cellCentroid(current);
+    segments.push(`Q ${control.x} ${control.y} ${nextPoint.x} ${nextPoint.y}`);
+  }
+
+  return segments.join(" ");
+}
+
+function cellRiverExitPoint(candidate, index) {
+  const cells = candidate.riverCells;
+  const current = cells[index];
+  const next = cells[index + 1];
+  if (next) {
+    const edge = H.cellsEdge(current, next);
+    return edge ? H.midpoint(edge.start, edge.end) : H.cellCentroid(next);
+  }
+  return riverExitPoint(candidate);
+}
+
+function riverEntryPoint(candidate) {
+  const firstMouth = candidate.originalMouth;
+  const firstSea = typedNeighbors(firstMouth, "SEA")[0]?.cell;
+  const firstMouthEdge = H.cellsEdge(firstSea, firstMouth);
+  return firstMouthEdge ? H.midpoint(firstMouthEdge.start, firstMouthEdge.end) : null;
+}
+
+function riverExitPoint(candidate) {
+  const exitEdge = candidate.riverCells.at(-1)?.edges.find(edge => edge.flags?.has("Boundary"));
+  return exitEdge ? H.midpoint(exitEdge.start, exitEdge.end) : null;
+}
+
+function appendRiverPath(layer, d, color, opacity) {
+  if (!d) return;
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", color);
+  path.setAttribute("stroke-width", "7");
+  path.setAttribute("stroke-opacity", opacity);
+  path.setAttribute("d", d);
+  layer.appendChild(path);
 }
 
 function connectedComponents(cells, neighborFn) {
@@ -405,7 +734,8 @@ function landHopDistances(landSet, starts) {
   while (frontier.length > 0) {
     const current = frontier.shift();
     const currentDistance = distances.get(current);
-    for (const {cell: neighbor} of passableLandNeighbors(current, landSet)) {
+    for (const {cell: neighbor} of landNeighbors(current)) {
+      if (!landSet.has(neighbor)) continue;
       if (distances.has(neighbor)) continue;
       distances.set(neighbor, currentDistance + 1);
       frontier.push(neighbor);

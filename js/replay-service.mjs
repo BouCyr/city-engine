@@ -204,6 +204,10 @@ export function hydrateOverlayDraw(overlay) {
     return createCoastCentroidOverlayDraw(overlay);
   }
 
+  if (overlay.type === "rivers") {
+    return createRiversOverlayDraw(overlay);
+  }
+
   return null;
 }
 
@@ -327,6 +331,86 @@ function createCoastCentroidOverlayDraw({points}) {
       appendCircle(layer, point.x, point.y, 3.5, "coast-centroid-point");
     }
   };
+}
+
+function createRiversOverlayDraw({polygons = [], arrows = [], lines = [], paths = []}) {
+  return function drawRiversOverlay(svg) {
+    const layer = svg.getElementById("overlay");
+    if (!layer) return;
+
+    for (const polygon of polygons) {
+      const element = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+      element.setAttribute("points", (polygon.points ?? []).map(point => `${point.x},${point.y}`).join(" "));
+      element.setAttribute("fill", polygon.fill);
+      element.setAttribute("stroke", polygon.stroke);
+      layer.appendChild(element);
+    }
+
+    for (const arrow of arrows) {
+      appendRiverArrow(layer, arrow);
+    }
+
+    for (const line of lines) {
+      const element = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      element.setAttribute("x1", line.x1);
+      element.setAttribute("y1", line.y1);
+      element.setAttribute("x2", line.x2);
+      element.setAttribute("y2", line.y2);
+      element.setAttribute("stroke", line.stroke);
+      element.setAttribute("stroke-width", line.strokeWidth);
+      layer.appendChild(element);
+    }
+
+    for (const path of paths) {
+      const element = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      element.setAttribute("fill", "none");
+      element.setAttribute("stroke", path.stroke);
+      element.setAttribute("stroke-width", path.strokeWidth);
+      element.setAttribute("stroke-opacity", path.opacity);
+      element.setAttribute("d", path.d);
+      layer.appendChild(element);
+    }
+  };
+}
+
+function appendRiverArrow(layer, arrow) {
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", arrow.x1);
+  line.setAttribute("y1", arrow.y1);
+  line.setAttribute("x2", arrow.x2);
+  line.setAttribute("y2", arrow.y2);
+  line.setAttribute("stroke", arrow.stroke);
+  line.setAttribute("stroke-width", arrow.strokeWidth);
+  layer.appendChild(line);
+
+  const head = riverArrowHead(arrow);
+  if (!head) return;
+
+  const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+  polygon.setAttribute("points", head.map(point => `${point.x},${point.y}`).join(" "));
+  polygon.setAttribute("fill", arrow.stroke);
+  layer.appendChild(polygon);
+}
+
+function riverArrowHead({x1, y1, x2, y2}) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return null;
+
+  const ux = dx / length;
+  const uy = dy / length;
+  const size = 16;
+  const width = 9;
+  const baseX = x2 - ux * size;
+  const baseY = y2 - uy * size;
+  const px = -uy * width;
+  const py = ux * width;
+  return [
+    {x: x2, y: y2},
+    {x: baseX + px, y: baseY + py},
+    {x: baseX - px, y: baseY - py},
+  ];
 }
 
 function nearestCompetitors(site, sites, limit) {

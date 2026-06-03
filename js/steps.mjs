@@ -75,7 +75,7 @@ export const steps = [
   {
     title:"Rivers",
     process:RIVERS.computeRivers,
-    createReplay: null,
+    createReplay: RIVERS.createReplay,
     description: (settings, stepMap) => [
       `This step separates open sea from inner seas, recomputes distance-to-open-sea data, and searches from open-sea mouths toward distant boundary exits.`,
       `For each mouth, it tries A* paths to exits from farthest to nearest, rejects short-edge crossings, and selects the valid river with the longest straight mouth-to-exit distance.`,
