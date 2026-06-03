@@ -32,7 +32,7 @@ import {
   MIN_EDGE_SIZE,
   selectSelectedRiver,
 } from "./steps/005.2-rivers.mjs";
-import {computeTributaries, selectTributary} from "./steps/006-tributaries.mjs";
+import {computeTributaries, mouthThirdScore, selectTributary} from "./steps/006-tributaries.mjs";
 
 function createSvgProbe() {
   const calls = [];
@@ -1223,6 +1223,38 @@ function validateTributarySelectionUsesCombinedDistanceAndSeaD() {
   assert.equal(selected, selectedByCombinedScore);
 }
 
+function validateTributaryMouthThirdScore() {
+  const cells = Array.from({length: 7}, (_, index) => ({id: `r-${index}`}));
+  const mainRiver = {riverCells: cells};
+  const atFirstThird = {mouth: {riverCell: cells[2]}};
+  const nearExit = {mouth: {riverCell: cells[6]}};
+  const missing = {mouth: {riverCell: {id: "missing"}}};
+
+  assert.equal(mouthThirdScore(atFirstThird, mainRiver), 1);
+  assert.ok(mouthThirdScore(nearExit, mainRiver) < mouthThirdScore(atFirstThird, mainRiver));
+  assert.equal(mouthThirdScore(missing, mainRiver), 0);
+}
+
+function validateTributarySelectionPrefersFirstThirdMouthBonus() {
+  const mainCells = Array.from({length: 7}, (_, index) => ({id: `r-${index}`}));
+  const mainRiver = {riverCells: mainCells};
+  const cell = id => ({id});
+  const candidate = (id, riverCell, sourceExitDistance, seaD) => ({
+    riverCells: [cell(`${id}-a`), cell(`${id}-b`)],
+    pathCost: sourceExitDistance,
+    sourceExitDistance,
+    mouth: {riverCell},
+    exit: {id: `${id}-exit`, seaD},
+  });
+  const exitHeuristicOnly = candidate("exit", mainCells[6], 100, 20);
+  const selectedByMouth = candidate("mouth", mainCells[2], 95, 19);
+
+  const selected = selectTributary([exitHeuristicOnly, selectedByMouth], mainRiver);
+
+  assert.equal(selected, selectedByMouth);
+  assert.equal(selected.mouthThirdScore, 1);
+}
+
 function validateTributariesAddAdjacentBankRiver() {
   const {settings, map} = createTributaryFixture();
   const result = computeTributaries({
@@ -1580,6 +1612,8 @@ validateAStarRiversPersistSelectedRiver();
 validateRiverCloneAndHydrationPreserveRivers();
 validateTributariesRegisteredInPipeline();
 validateTributarySelectionUsesCombinedDistanceAndSeaD();
+validateTributaryMouthThirdScore();
+validateTributarySelectionPrefersFirstThirdMouthBonus();
 validateTributariesAddAdjacentBankRiver();
 validateAStarRiverDrawsOnlyCurvedPath();
 validateAStarRiversReplayFrames();

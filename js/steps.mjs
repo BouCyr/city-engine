@@ -94,7 +94,7 @@ export const steps = [
     description: (settings, stepMap) => [
       `This step reads the selected main river from <em>map.rivers</em>, splits its landmass into river banks, and tries to add one tributary per bank.`,
       `Tributary mouths must be land cells next to the main river, at least four land-cell steps away from sea, and the second tributary mouth must stay at least two cell steps away from the first.`,
-      `Each tributary measures distance from either sea or the main river, requires the first eight path cells to grow that distance, and selects the route with the best combined main-exit distance and exit seaD score.`,
+      `Each tributary measures distance from either sea or the main river, requires the first eight path cells to grow that distance, and selects the route with the best combined main-exit distance, exit seaD, and first-third mouth-position score.`,
     ],
     explanation: (settings, stepResult) => [
       `Tributaries are stored after the main river in <em>map.rivers</em>. The step keeps the main river as the first entry and appends up to two tributaries.`,

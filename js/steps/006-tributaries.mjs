@@ -126,12 +126,13 @@ export function findBestTributary({bank, mainRiver, mainRiverSet, seaDistances, 
       validRivers.push({
         ...candidate,
         sourceExitDistance: sourceExitDistance(candidate, mainRiver),
+        mouthThirdScore: mouthThirdScore(candidate, mainRiver),
       });
     }
     if (timedOut) break;
   }
 
-  return selectTributary(validRivers);
+  return selectTributary(validRivers, mainRiver);
 }
 
 export function computeRiverBanks(landmass, riverSet) {
@@ -202,7 +203,10 @@ function computeSeaOnlyDistances(landSet) {
   return landHopDistances(landSet, starts);
 }
 
-export function selectTributary(candidates) {
+export function selectTributary(candidates, mainRiver = null) {
+  candidates.forEach(candidate => {
+    candidate.mouthThirdScore = candidate.mouthThirdScore ?? mouthThirdScore(candidate, mainRiver);
+  });
   const maxSourceExitDistance = Math.max(1, ...candidates.map(candidate => candidate.sourceExitDistance ?? 0));
   const maxExitSeaD = Math.max(1, ...candidates.map(candidate => candidate.exit?.seaD ?? 0));
   return [...candidates].sort((a, b) => compareTributaries(a, b, maxSourceExitDistance, maxExitSeaD))[0] ?? null;
@@ -218,7 +222,21 @@ function compareTributaries(a, b, maxSourceExitDistance, maxExitSeaD) {
 
 function tributaryScore(candidate, maxSourceExitDistance, maxExitSeaD) {
   return ((candidate.sourceExitDistance ?? 0) / maxSourceExitDistance)
-    + ((candidate.exit?.seaD ?? 0) / maxExitSeaD);
+    + ((candidate.exit?.seaD ?? 0) / maxExitSeaD)
+    + (candidate.mouthThirdScore ?? 0);
+}
+
+export function mouthThirdScore(candidate, mainRiver) {
+  const riverCells = mainRiver?.riverCells ?? [];
+  if (riverCells.length < 2 || !candidate?.mouth?.riverCell) return 0;
+
+  const index = riverCells.indexOf(candidate.mouth.riverCell);
+  if (index < 0) return 0;
+
+  const progress = index / (riverCells.length - 1);
+  const target = 1 / 3;
+  const maxDistance = 2 / 3;
+  return Math.max(0, 1 - Math.abs(progress - target) / maxDistance);
 }
 
 function sourceExitDistance(candidate, mainRiver) {
