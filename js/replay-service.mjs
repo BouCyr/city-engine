@@ -108,6 +108,23 @@ export function serializeMap(map) {
         draw: area.draw !== null,
       })),
     })),
+    rivers: (map.rivers ?? []).map((river) => ({
+      id: river.id,
+      type: river.type,
+      order: river.order,
+      sourceRiverId: river.sourceRiverId ?? null,
+      pathCost: river.pathCost ?? 0,
+      mouthExitDistance: river.mouthExitDistance ?? 0,
+      sourceExitDistance: river.sourceExitDistance ?? 0,
+      riverCellIds: (river.riverCells ?? []).map((cell) => cell.id),
+      mouth: river.mouth ? {
+        cellId: river.mouth.cell?.id ?? null,
+        seaCellId: river.mouth.seaCell?.id ?? null,
+        riverCellId: river.mouth.riverCell?.id ?? null,
+      } : null,
+      originalMouthId: river.originalMouth?.id ?? null,
+      exitId: river.exit?.id ?? null,
+    })),
   };
 }
 
@@ -183,6 +200,24 @@ export function hydrateMap(data) {
       )),
     )
   ));
+
+  map.rivers = (data?.rivers ?? []).map((riverData) => ({
+    id: riverData.id,
+    type: riverData.type,
+    order: riverData.order,
+    sourceRiverId: riverData.sourceRiverId ?? null,
+    pathCost: riverData.pathCost ?? 0,
+    mouthExitDistance: riverData.mouthExitDistance ?? 0,
+    sourceExitDistance: riverData.sourceExitDistance ?? 0,
+    riverCells: (riverData.riverCellIds ?? []).map((id) => cellById.get(id)).filter(Boolean),
+    mouth: riverData.mouth ? {
+      cell: riverData.mouth.cellId ? cellById.get(riverData.mouth.cellId) ?? null : null,
+      seaCell: riverData.mouth.seaCellId ? cellById.get(riverData.mouth.seaCellId) ?? null : null,
+      riverCell: riverData.mouth.riverCellId ? cellById.get(riverData.mouth.riverCellId) ?? null : null,
+    } : null,
+    originalMouth: riverData.originalMouthId ? cellById.get(riverData.originalMouthId) ?? null : null,
+    exit: riverData.exitId ? cellById.get(riverData.exitId) ?? null : null,
+  }));
 
   return map;
 }

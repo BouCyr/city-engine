@@ -6,6 +6,7 @@ export function Map(settings){
     edges:[],
     cells:[],
     areas:[],
+    rivers:[],
 
 
     draw:function(svgDomElt){

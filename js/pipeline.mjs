@@ -45,6 +45,7 @@ function collectMapMetrics(map) {
     nodes: collectEntityMetrics(map.nodes),
     cells: collectEntityMetrics(map.cells),
     areas: collectEntityMetrics(map.areas),
+    rivers: collectEntityMetrics(map.rivers),
   };
 }
 

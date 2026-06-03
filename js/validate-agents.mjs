@@ -9,6 +9,7 @@ import {Settings} from "./data/settings.mjs";
 import {runPipeline} from "./pipeline.mjs";
 import {
   buildReplayPayload,
+  hydrateMap,
   hydrateReplay,
   plainSettings,
   serializeMap,
@@ -20,7 +21,7 @@ import {cells, createReplay as createGatherReplay} from "./steps/001-gather.mjs"
 import {relax} from "./steps/002-lloyd.mjs";
 import {prune} from "./steps/003-prune.mjs";
 import {classifySeaLand, coastLayersAt, createReplay as createCoastReplay, TERRAIN_COAST, TERRAIN_LAND, TERRAIN_SEA} from "./steps/004-sea-land.mjs";
-import {computeRivers as computeLegacyRivers, MIN_EDGE_SIZE, selectRiver} from "./steps/005-rivers.mjs";
+import {computeRivers as computeLegacyRivers, MIN_EDGE_SIZE as LEGACY_MIN_EDGE_SIZE, selectRiver} from "./steps/005-rivers.mjs";
 import {
   computeRivers as computeAStarRivers,
   createReplay as createAStarRiversReplay,
@@ -28,8 +29,10 @@ import {
   findAStarPath,
   findBestAStarRiver,
   findMouthCandidates,
+  MIN_EDGE_SIZE,
   selectSelectedRiver,
 } from "./steps/005.2-rivers.mjs";
+import {computeTributaries, selectTributary} from "./steps/006-tributaries.mjs";
 
 function createSvgProbe() {
   const calls = [];
@@ -716,6 +719,31 @@ function createGridTerrainFixture({width, height, sea = [], seed = "river-grid"}
   return {settings, map};
 }
 
+function createTributaryFixture() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 16,
+    height: 7,
+    sea: [[0, 3]],
+    seed: "tributary-grid",
+  });
+  const byId = id => map.cells.find(cell => cell.id === id);
+  const mainCells = [6, 5, 4, 3, 2, 1, 0].map(y => byId(`c-4-${y}`));
+  map.rivers = [{
+    id: "river-0",
+    type: "MAIN",
+    order: 0,
+    sourceRiverId: null,
+    riverCells: mainCells,
+    mouth: {cell: mainCells[0], seaCell: byId("c-0-3")},
+    originalMouth: mainCells[0],
+    exit: mainCells.at(-1),
+    pathCost: 0,
+    mouthExitDistance: H.distance(H.cellCentroid(mainCells[0]), H.cellCentroid(mainCells.at(-1))),
+  }];
+
+  return {settings, map};
+}
+
 function validateRiversClassifyOpenAndInnerSeas() {
   const {settings, map} = createGridTerrainFixture({
     width: 8,
@@ -771,7 +799,7 @@ function validateRiversRejectShortEdges() {
   const firstLand = map.cells.find(cell => cell.id === "c-1-2");
   const nextLand = map.cells.find(cell => cell.id === "c-2-2");
   const shared = firstLand.edges.find(edge => edge.leftCell === nextLand || edge.rightCell === nextLand);
-  shared.end.x = shared.start.x + MIN_EDGE_SIZE;
+  shared.end.x = shared.start.x + LEGACY_MIN_EDGE_SIZE;
   shared.end.y = shared.start.y;
 
   const result = computeLegacyRivers({
@@ -982,6 +1010,46 @@ function validateAStarRiverCannotReturnNearSeaAfterFourCellsAway() {
   assert.equal(candidate, null);
 }
 
+function validateAStarRiverSupportsCustomSeaDThreshold() {
+  const {map} = createGridTerrainFixture({
+    width: 10,
+    height: 3,
+    sea: [],
+    seed: "river-astar-custom-sead",
+  });
+  const byId = id => map.cells.find(cell => cell.id === id);
+  const start = byId("c-0-1");
+  const exit = byId("c-9-1");
+  const thresholdOptions = {
+    initialSeaDIncreaseSteps: 8,
+    lockedSeaDistance: 8,
+  };
+
+  setGridSeaD(map, cell => {
+    const x = Number(cell.id.match(/^c-(\d+)-/)[1]);
+    if (x === 8) return 7;
+    return x + 1;
+  });
+
+  const rejected = findAStarPath({
+    mouth: {cell: start, seaCell: null},
+    exit,
+    selectedLandSet: new Set(map.cells),
+    ...thresholdOptions,
+  });
+  assert.equal(rejected, null);
+
+  setGridSeaD(map, cell => Number(cell.id.match(/^c-(\d+)-/)[1]) + 1);
+  const accepted = findAStarPath({
+    mouth: {cell: start, seaCell: null},
+    exit,
+    selectedLandSet: new Set(map.cells),
+    ...thresholdOptions,
+  });
+  assert.ok(accepted);
+  assertNoRepeatedRiverCells(accepted);
+}
+
 function validateAStarRiverFailsOnIntermediateBoundaryCell() {
   const {map} = createGridTerrainFixture({
     width: 6,
@@ -1081,6 +1149,110 @@ function validateAStarRiverSelectedUsesTopFiveDistanceThenExitSeaD() {
   const selected = selectSelectedRiver(candidates);
 
   assert.equal(selected, selectedBySeaD);
+}
+
+function validateAStarRiversPersistSelectedRiver() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 8,
+    height: 5,
+    sea: [[0, 2]],
+    seed: "river-astar-persist",
+  });
+
+  const result = computeAStarRivers({
+    ...settings,
+    rng: settings.createStepRng("Rivers"),
+  }, map);
+
+  assert.equal(result.rivers.length, 1);
+  assert.equal(result.rivers[0].type, "MAIN");
+  assert.equal(result.rivers[0].id, "river-0");
+  assert.ok(result.rivers[0].riverCells.length > 0);
+  assert.ok(result.rivers[0].riverCells.every(cell => result.cells.includes(cell)));
+  assert.equal(result.rivers[0].originalMouth, result.rivers[0].mouth.cell);
+  assert.ok(result.cells.includes(result.rivers[0].exit));
+}
+
+function validateRiverCloneAndHydrationPreserveRivers() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 8,
+    height: 5,
+    sea: [[0, 2]],
+    seed: "river-clone-hydrate",
+  });
+  const result = computeAStarRivers({
+    ...settings,
+    rng: settings.createStepRng("Rivers"),
+  }, map);
+
+  const cloned = cloneDeepKeepFunctions(result);
+  assert.notEqual(cloned.rivers[0].riverCells[0], result.rivers[0].riverCells[0]);
+  assert.equal(cloned.rivers[0].riverCells[0], cloned.cells.find(cell => cell.id === result.rivers[0].riverCells[0].id));
+  assert.equal(cloned.rivers[0].mouth.cell, cloned.cells.find(cell => cell.id === result.rivers[0].mouth.cell.id));
+  assert.equal(cloned.rivers[0].exit, cloned.cells.find(cell => cell.id === result.rivers[0].exit.id));
+
+  const hydrated = hydrateMap(serializeMap(result));
+  assert.equal(hydrated.rivers[0].riverCells[0], hydrated.cells.find(cell => cell.id === result.rivers[0].riverCells[0].id));
+  assert.equal(hydrated.rivers[0].mouth.cell, hydrated.cells.find(cell => cell.id === result.rivers[0].mouth.cell.id));
+  assert.equal(hydrated.rivers[0].exit, hydrated.cells.find(cell => cell.id === result.rivers[0].exit.id));
+}
+
+function validateTributariesRegisteredInPipeline() {
+  const riverIndex = steps.findIndex(step => step.title === "Rivers");
+  const tributaryIndex = steps.findIndex(step => step.title === "Tributaries");
+
+  assert.ok(riverIndex >= 0);
+  assert.equal(tributaryIndex, riverIndex + 1);
+  assert.equal(steps[tributaryIndex]?.process, computeTributaries);
+}
+
+function validateTributarySelectionUsesCombinedDistanceAndSeaD() {
+  const cell = id => ({id});
+  const candidate = (id, sourceExitDistance, seaD) => ({
+    riverCells: [cell(`${id}-a`), cell(`${id}-b`)],
+    pathCost: sourceExitDistance,
+    sourceExitDistance,
+    exit: {id: `${id}-exit`, seaD},
+  });
+  const farthestOnly = candidate("far", 100, 8);
+  const selectedByCombinedScore = candidate("combined", 50, 20);
+  const weaker = candidate("weak", 60, 10);
+
+  const selected = selectTributary([farthestOnly, selectedByCombinedScore, weaker]);
+
+  assert.equal(selected, selectedByCombinedScore);
+}
+
+function validateTributariesAddAdjacentBankRiver() {
+  const {settings, map} = createTributaryFixture();
+  const result = computeTributaries({
+    ...settings,
+    rng: settings.createStepRng("Tributaries"),
+  }, map);
+  const mainRiver = result.rivers[0];
+  const tributaries = result.rivers.filter(river => river.type === "TRIBUTARY");
+
+  assert.ok(tributaries.length >= 1);
+  assert.ok(tributaries.length <= 2);
+
+  const tributary = tributaries[0];
+  assert.equal(tributary.sourceRiverId, mainRiver.id);
+  assert.ok(tributary.riverCells.every(cell => result.cells.includes(cell)));
+  assert.equal(tributary.originalMouth, tributary.mouth.cell);
+  assert.ok(mainRiver.riverCells.includes(tributary.mouth.riverCell));
+  assert.ok(H.cellsEdge(tributary.mouth.cell, tributary.mouth.riverCell));
+  assert.ok(tributary.mouth.cell.seaD >= 1);
+  assert.ok(tributary.exit.edges.some(edge => edge.flags.has("Boundary")));
+  assert.ok(tributary.exit.seaD >= 8);
+  assertNoRepeatedRiverCells(tributary);
+  assert.equal(tributary.sourceExitDistance, H.distance(H.cellCentroid(tributary.exit), H.cellCentroid(mainRiver.exit)));
+
+  const {calls, svg} = createSvgProbe();
+  result.drawOverlay(svg);
+  const paths = calls.filter(call => call.name === "path");
+  assert.equal(paths.length, result.rivers.length);
+  assert.ok(paths.every(path => path.attrs.stroke === "var(--sea-edge)"));
+  assert.ok(paths.every(path => path.attrs.d.includes(" Q ")));
 }
 
 function validateAStarRiverDrawsOnlyCurvedPath() {
@@ -1399,10 +1571,16 @@ validateAStarRiverRejectsShortCoastMouthEdges();
 validateAStarRiverRejectsShortEdges();
 validateAStarRiverRequiresInitialSeaDIncrease();
 validateAStarRiverCannotReturnNearSeaAfterFourCellsAway();
+validateAStarRiverSupportsCustomSeaDThreshold();
 validateAStarRiverFailsOnIntermediateBoundaryCell();
 validateAStarRiverFallsBackFromBlockedFarthestExit();
 validateAStarRiverSelectsHighestSeaDExitWithinTopFiveDistance();
 validateAStarRiverSelectedUsesTopFiveDistanceThenExitSeaD();
+validateAStarRiversPersistSelectedRiver();
+validateRiverCloneAndHydrationPreserveRivers();
+validateTributariesRegisteredInPipeline();
+validateTributarySelectionUsesCombinedDistanceAndSeaD();
+validateTributariesAddAdjacentBankRiver();
 validateAStarRiverDrawsOnlyCurvedPath();
 validateAStarRiversReplayFrames();
 validateCoastReplayMatchesFinalClassification();

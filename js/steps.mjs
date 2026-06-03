@@ -4,6 +4,7 @@ import * as LLOYD  from "./steps/002-lloyd.mjs";
 import * as PRUNE  from "./steps/003-prune.mjs";
 import * as SEA_LAND from "./steps/004-sea-land.mjs";
 import * as RIVERS from "./steps/005.2-rivers.mjs";
+import * as TRIBUTARIES from "./steps/006-tributaries.mjs";
 
 
 export const steps = [
@@ -84,6 +85,20 @@ export const steps = [
       `Rivers starts only from mouth candidates on the largest landmass and adjacent to open sea. Mouths are tried from farthest to nearest relative to the map center, then exits are tried from farthest to nearest relative to each mouth.`,
       `A* moves cell to cell through shared edges, costs each move through the shared-edge midpoint, requires the first four moves to increase distance from the nearest sea, and blocks routes that return near sea after reaching seaD 4.`,
       `The overlay draws the selected top-five/highest-seaD winner with the same blue used for sea edges.`,
+    ],
+    renderExplanationExtras: null,
+  },
+  {
+    title:"Tributaries",
+    process:TRIBUTARIES.computeTributaries,
+    description: (settings, stepMap) => [
+      `This step reads the selected main river from <em>map.rivers</em>, splits its landmass into river banks, and tries to add one tributary per bank.`,
+      `Tributary mouths must be land cells next to the main river, at least four land-cell steps away from sea, and the second tributary mouth must stay at least two cell steps away from the first.`,
+      `Each tributary measures distance from either sea or the main river, requires the first eight path cells to grow that distance, and selects the route with the best combined main-exit distance and exit seaD score.`,
+    ],
+    explanation: (settings, stepResult) => [
+      `Tributaries are stored after the main river in <em>map.rivers</em>. The step keeps the main river as the first entry and appends up to two tributaries.`,
+      `Each bank is searched independently, starting with the larger bank. Tributary exits must have seaD at least eight, and banks with no valid route within the computation limit are skipped.`,
     ],
     renderExplanationExtras: null,
   }

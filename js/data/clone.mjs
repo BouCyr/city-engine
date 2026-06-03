@@ -42,7 +42,7 @@ function cloneMapGraph(map, seen) {
   seen.set(map, clone);
 
   for (const key of Reflect.ownKeys(map)) {
-    if (key !== "nodes" && key !== "edges" && key !== "cells" && key !== "areas") {
+    if (key !== "nodes" && key !== "edges" && key !== "cells" && key !== "areas" && key !== "rivers") {
       clone[key] = cloneDeepKeepFunctions(map[key], seen);
     }
   }
@@ -98,7 +98,26 @@ function cloneMapGraph(map, seen) {
     return groupClone;
   });
 
+  clone.rivers = (map.rivers ?? []).map((river) => cloneRiver(river, cellMap, seen));
+
   return clone;
+}
+
+function cloneRiver(river, cellMap, seen) {
+  const riverClone = clonePlainGraphObject(river, seen, ["riverCells", "mouth", "originalMouth", "exit"]);
+  riverClone.riverCells = (river.riverCells ?? []).map((cell) => cellMap.get(cell)).filter(Boolean);
+  riverClone.originalMouth = river.originalMouth ? cellMap.get(river.originalMouth) ?? null : null;
+  riverClone.exit = river.exit ? cellMap.get(river.exit) ?? null : null;
+  riverClone.mouth = river.mouth ? cloneRiverMouth(river.mouth, cellMap) : null;
+  return riverClone;
+}
+
+function cloneRiverMouth(mouth, cellMap) {
+  return {
+    cell: mouth.cell ? cellMap.get(mouth.cell) ?? null : null,
+    seaCell: mouth.seaCell ? cellMap.get(mouth.seaCell) ?? null : null,
+    riverCell: mouth.riverCell ? cellMap.get(mouth.riverCell) ?? null : null,
+  };
 }
 
 function clonePlainGraphObject(value, seen, skippedKeys) {

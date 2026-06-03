@@ -5,12 +5,12 @@ import * as H from "../data/helper.mjs";
 
 export const MIN_EDGE_SIZE = 40;
 
-const OPEN_SEA = "OPEN_SEA";
-const INNER_SEA = "INNER_SEA";
+export const OPEN_SEA = "OPEN_SEA";
+export const INNER_SEA = "INNER_SEA";
 const MAX_COMPUTE_MS = 1000;
-const MIN_EXIT_OPEN_SEA_DISTANCE = 5;
+export const MIN_EXIT_OPEN_SEA_DISTANCE = 5;
 const INITIAL_SEAD_INCREASE_STEPS = 4;
-const MIN_LOCKED_SEA_DISTANCE = 4;
+export const MIN_LOCKED_SEA_DISTANCE = 4;
 const RIVER_COLOR = "var(--sea-edge)";
 
 export function computeRivers(settings, map) {
@@ -84,8 +84,10 @@ export function computeRivers(settings, map) {
     return map;
   }
 
-  console.info(`Rivers A*: selected ${formatRiver(search.selected)}`);
-  drawRiver(search.selected, map, RIVER_COLOR);
+  const selectedRiver = normalizeRiver(search.selected, {type: "MAIN", id: "river-0", order: 0});
+  map.rivers = [selectedRiver];
+  console.info(`Rivers A*: selected ${formatRiver(selectedRiver)}`);
+  drawRivers(map.rivers, map, RIVER_COLOR);
   console.info(`Rivers A*: done in ${Math.round(now() - startedAt)}ms`);
 
   return map;
@@ -384,11 +386,11 @@ function forbiddenRiverEdges(map) {
     .filter(edge => H.edgeLength(edge) <= MIN_EDGE_SIZE);
 }
 
-export function findAStarPath({mouth, exit, selectedLandSet}) {
-  return findAStarPathDetailed({mouth, exit, selectedLandSet}).candidate;
+export function findAStarPath({mouth, exit, selectedLandSet, initialSeaDIncreaseSteps = INITIAL_SEAD_INCREASE_STEPS, lockedSeaDistance = MIN_LOCKED_SEA_DISTANCE}) {
+  return findAStarPathDetailed({mouth, exit, selectedLandSet, initialSeaDIncreaseSteps, lockedSeaDistance}).candidate;
 }
 
-function findAStarPathDetailed({mouth, exit, selectedLandSet}) {
+export function findAStarPathDetailed({mouth, exit, selectedLandSet, initialSeaDIncreaseSteps = INITIAL_SEAD_INCREASE_STEPS, lockedSeaDistance = MIN_LOCKED_SEA_DISTANCE}) {
   const start = mouth.cell;
   if (!selectedLandSet.has(start) || !selectedLandSet.has(exit)) {
     return {candidate: null, partial: null};
@@ -397,7 +399,7 @@ function findAStarPathDetailed({mouth, exit, selectedLandSet}) {
   const startState = {
     cell: start,
     steps: 0,
-    lockedAwayFromSea: isLockedAwayFromSea(start),
+    lockedAwayFromSea: isLockedAwayFromSea(start, lockedSeaDistance),
     visitedCells: new Set([start]),
   };
   const startKey = pathStateKey(startState);
@@ -434,16 +436,16 @@ function findAStarPathDetailed({mouth, exit, selectedLandSet}) {
 
     for (const neighbor of passableLandNeighbors(current, selectedLandSet)) {
       const next = neighbor.cell;
-      const mustIncreaseSeaD = currentState.steps < INITIAL_SEAD_INCREASE_STEPS;
+      const mustIncreaseSeaD = currentState.steps < initialSeaDIncreaseSteps;
       if (mustIncreaseSeaD && !increasesSeaD(current, next)) continue;
-      if (currentState.lockedAwayFromSea && !isLockedAwayFromSea(next)) continue;
+      if (currentState.lockedAwayFromSea && !isLockedAwayFromSea(next, lockedSeaDistance)) continue;
       if (next !== exit && touchesBoundary(next)) continue;
       if (currentState.visitedCells.has(next)) continue;
 
       const nextState = {
         cell: next,
-        steps: Math.min(currentState.steps + 1, INITIAL_SEAD_INCREASE_STEPS),
-        lockedAwayFromSea: currentState.lockedAwayFromSea || isLockedAwayFromSea(next),
+        steps: Math.min(currentState.steps + 1, initialSeaDIncreaseSteps),
+        lockedAwayFromSea: currentState.lockedAwayFromSea || isLockedAwayFromSea(next, lockedSeaDistance),
         visitedCells: new Set([...currentState.visitedCells, next]),
       };
       const nextKey = pathStateKey(nextState);
@@ -477,6 +479,7 @@ function clearRiverState(map) {
     cell.flags?.delete?.(INNER_SEA);
   }
   map.areas = (map.areas ?? []).filter(group => group.name !== "river-banks");
+  map.rivers = [];
 }
 
 function flagShortEdges(map) {
@@ -488,7 +491,7 @@ function flagShortEdges(map) {
     });
 }
 
-function classifySeaComponents(map) {
+export function classifySeaComponents(map) {
   const seaComponents = connectedComponents(map.cells.filter(cell => cell.type === "SEA"), seaNeighbors);
   seaComponents.forEach((cells, index) => {
     const component = {
@@ -505,7 +508,7 @@ function classifySeaComponents(map) {
   return seaComponents;
 }
 
-function computeDistanceFromSea(selectedLandmass, selectedLandSet, seaComponents) {
+export function computeDistanceFromSea(selectedLandmass, selectedLandSet, seaComponents) {
   const starts = [];
   for (const component of seaComponents) {
     for (const seaCell of component.cells) {
@@ -563,13 +566,13 @@ export function selectSelectedRiver(candidates) {
     .sort(compareByExitSeaD)[0] ?? null;
 }
 
-function compareByPathCost(a, b) {
+export function compareByPathCost(a, b) {
   return b.pathCost - a.pathCost
     || b.riverCells.length - a.riverCells.length
     || riverKey(a).localeCompare(riverKey(b));
 }
 
-function compareByMouthExitDistance(a, b) {
+export function compareByMouthExitDistance(a, b) {
   return b.mouthExitDistance - a.mouthExitDistance
     || compareByPathCost(a, b);
 }
@@ -627,8 +630,8 @@ function increasesSeaD(current, next) {
   return (next.seaD ?? 0) > (current.seaD ?? 0);
 }
 
-function isLockedAwayFromSea(cell) {
-  return (cell.seaD ?? 0) >= MIN_LOCKED_SEA_DISTANCE;
+function isLockedAwayFromSea(cell, lockedSeaDistance = MIN_LOCKED_SEA_DISTANCE) {
+  return (cell.seaD ?? 0) >= lockedSeaDistance;
 }
 
 function movementCost(current, next, edge) {
@@ -636,7 +639,7 @@ function movementCost(current, next, edge) {
   return H.distance(H.cellCentroid(current), middle) + H.distance(middle, H.cellCentroid(next));
 }
 
-function mouthExitDistance(mouth, exit) {
+export function mouthExitDistance(mouth, exit) {
   return H.distance(H.cellCentroid(mouth.cell), H.cellCentroid(exit));
 }
 
@@ -649,17 +652,22 @@ function formatRiver(candidate) {
 
 export function drawRiver(candidate, map, color = "blue") {
   if (!candidate) return;
-  const curvedPath = buildCurvedRiverPath(candidate);
+  drawRivers([candidate], map, color);
+}
+
+export function drawRivers(candidates, map, color = "blue") {
+  const curvedPaths = (candidates ?? []).map(buildCurvedRiverPath).filter(Boolean);
+  if (curvedPaths.length === 0) return;
   const prevOverlayDraw = map.drawOverlay;
   map.drawOverlay = (svg) => {
     if (prevOverlayDraw) prevOverlayDraw(svg);
     const layer = svg.getElementById("cells");
     if (!layer) return;
-    appendRiverPath(layer, curvedPath, color, "1");
+    curvedPaths.forEach(path => appendRiverPath(layer, path, color, "1"));
   };
 }
 
-function buildCurvedRiverPath(candidate) {
+export function buildCurvedRiverPath(candidate) {
   const cells = candidate.riverCells;
   if (cells.length === 0) return "";
 
@@ -691,6 +699,11 @@ function cellRiverExitPoint(candidate, index) {
 
 function riverEntryPoint(candidate) {
   const firstMouth = candidate.originalMouth;
+  if (candidate.mouth?.riverCell) {
+    const firstRiverEdge = H.cellsEdge(candidate.mouth.riverCell, firstMouth);
+    return firstRiverEdge ? H.midpoint(firstRiverEdge.start, firstRiverEdge.end) : null;
+  }
+
   const firstSea = typedNeighbors(firstMouth, "SEA")[0]?.cell;
   const firstMouthEdge = H.cellsEdge(firstSea, firstMouth);
   return firstMouthEdge ? H.midpoint(firstMouthEdge.start, firstMouthEdge.end) : null;
@@ -712,7 +725,7 @@ function appendRiverPath(layer, d, color, opacity) {
   layer.appendChild(path);
 }
 
-function connectedComponents(cells, neighborFn) {
+export function connectedComponents(cells, neighborFn) {
   const remaining = new Set(cells);
   const components = [];
   while (remaining.size > 0) {
@@ -734,7 +747,7 @@ function connectedComponents(cells, neighborFn) {
   return components;
 }
 
-function landHopDistances(landSet, starts) {
+export function landHopDistances(landSet, starts) {
   const distances = new Map();
   const frontier = starts.filter(cell => landSet.has(cell));
   frontier.forEach(cell => distances.set(cell, 1));
@@ -759,7 +772,7 @@ function passableLandNeighbors(cell, landSet) {
     .filter(neighbor => H.edgeLength(neighbor.edge) > MIN_EDGE_SIZE);
 }
 
-function landNeighbors(cell) {
+export function landNeighbors(cell) {
   return typedNeighbors(cell, "LAND");
 }
 
@@ -767,7 +780,7 @@ function seaNeighbors(cell) {
   return typedNeighbors(cell, "SEA");
 }
 
-function typedNeighbors(cell, type) {
+export function typedNeighbors(cell, type) {
   return cell.edges
     .map(edge => ({cell: otherSide(edge, cell), edge}))
     .filter(neighbor => neighbor.cell?.type === type);
@@ -780,11 +793,11 @@ function otherSide(edge, cell) {
   return null;
 }
 
-function touchesBoundary(cell) {
+export function touchesBoundary(cell) {
   return cell.edges.some(edge => edge.flags?.has("Boundary"));
 }
 
-function largestComponent(components) {
+export function largestComponent(components) {
   return [...components].sort((a, b) => b.length - a.length || componentKey(a).localeCompare(componentKey(b)))[0] ?? [];
 }
 
@@ -813,7 +826,7 @@ function compareMouths(a, b) {
   return compareCells(a.cell, b.cell) || a.seaCell.id.localeCompare(b.seaCell.id);
 }
 
-function compareCells(a, b) {
+export function compareCells(a, b) {
   return String(a.id).localeCompare(String(b.id));
 }
 
@@ -821,8 +834,28 @@ function componentKey(component) {
   return component.map(cell => cell.id).sort().join("|");
 }
 
-function riverKey(candidate) {
+export function riverKey(candidate) {
   return candidate.riverCells.map(cell => cell.id).join("|");
+}
+
+export function normalizeRiver(candidate, {type = "MAIN", id = "river-0", order = 0, sourceRiverId = null} = {}) {
+  return {
+    ...candidate,
+    id,
+    type,
+    order,
+    sourceRiverId,
+    mouth: normalizeRiverMouth(candidate.mouth),
+  };
+}
+
+function normalizeRiverMouth(mouth) {
+  if (!mouth) return null;
+  return {
+    cell: mouth.cell ?? null,
+    seaCell: mouth.seaCell ?? null,
+    riverCell: mouth.riverCell ?? null,
+  };
 }
 
 function now() {
