@@ -24,8 +24,9 @@ export function createDrawEdgeFn(edge, fill="none", stroke="#CCC", strokeWidth="
   return function drawEdge(svg){
     const layer = svg.getElementById("edges");
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    const start = edge.start;
-    const end = edge.end;
+    const drawableEdge = edge || this;
+    const start = drawableEdge.start;
+    const end = drawableEdge.end;
     path.setAttribute("d", `M ${start.x} ${start.y} L ${end.x} ${end.y}`);
     path.setAttribute("fill", fill);
     path.setAttribute("stroke", stroke);

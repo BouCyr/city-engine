@@ -71,11 +71,16 @@ function cloneMapGraph(map, seen) {
   });
 
   clone.cells = map.cells.map(cell => {
-    const cellClone = clonePlainGraphObject(cell, seen, ["edges"]);
+    const cellClone = clonePlainGraphObject(cell, seen, ["edges", "toSea"]);
     cellClone.edges = cell.edges.map(edge => edgeMap.get(edge));
     cellMap.set(cell, cellClone);
     return cellClone;
   });
+
+  for (const cell of map.cells) {
+    const cellClone = cellMap.get(cell);
+    if (cell.toSea) cellClone.toSea = cellMap.get(cell.toSea);
+  }
 
   for (const edge of map.edges) {
     const edgeClone = edgeMap.get(edge);

@@ -18,7 +18,14 @@ import {createReplay as createScatterReplay, scatterPoints} from "./steps/000-sc
 import {cells, createReplay as createGatherReplay} from "./steps/001-gather.mjs";
 import {relax} from "./steps/002-lloyd.mjs";
 import {prune} from "./steps/003-prune.mjs";
-import {classifySeaLand, createReplay as createCoastReplay, TERRAIN_COAST, TERRAIN_LAND, TERRAIN_SEA} from "./steps/004-sea-land.mjs";
+import {classifySeaLand, coastLayersAt, createReplay as createCoastReplay, TERRAIN_COAST, TERRAIN_LAND, TERRAIN_SEA} from "./steps/004-sea-land.mjs";
+import {computeRivers as computeLegacyRivers, MIN_EDGE_SIZE, selectRiver} from "./steps/005-rivers.mjs";
+import {
+  computeRivers as computeAStarRivers,
+  findAStarPath,
+  findBestAStarRiver,
+  selectDisplayRivers,
+} from "./steps/005.2-rivers.mjs";
 
 function createSvgProbe() {
   const calls = [];
@@ -93,6 +100,23 @@ function validateSnapshotDrawingUsesClonedNodes() {
   const {calls, svg} = createSvgProbe();
   cloned.edges[0].draw(svg);
   assert.equal(calls[0].attrs.d, "M 1 2 L 3 4");
+}
+
+function validateClonePreservesCellToSeaReference() {
+  const map = buildMapWithEdge();
+  const [edge] = map.edges;
+  const seaCell = Cell("sea", [edge]);
+  const landCell = Cell("land", [edge]);
+  seaCell.type = "SEA";
+  landCell.type = "LAND";
+  landCell.toSea = seaCell;
+  edge.leftCell = seaCell;
+  edge.rightCell = landCell;
+  map.cells.push(seaCell, landCell);
+
+  const cloned = cloneDeepKeepFunctions(map);
+
+  assert.equal(cloned.cells[1].toSea, cloned.cells[0]);
 }
 
 function validatePipelineClonesBeforeSteps() {
@@ -536,6 +560,447 @@ function validateSeaLandStepClassifiesAndTags() {
   assert.ok(result.areas[0].areas[1].cells.every((cell) => result.cells.includes(cell)));
 }
 
+function coastBiasTestSettings(seed = "coast-bias") {
+  const settings = new Settings(seed);
+  settings.size = 1000;
+  settings.coast = {
+    ...settings.coast,
+    seaBorders: ["SOUTH", "EAST"],
+    seaPercent: 0.25,
+    distanceWeight: 1.35,
+    edgeBias: 0.35,
+    edgeBiasReach: 0.22,
+    cornerBias: 0.55,
+    cornerBiasReach: 0.70,
+    largeAmplitude: 0,
+    mediumAmplitude: 0,
+    smallAmplitude: 0,
+    smoothingPasses: 0,
+    artifactsMax: 0,
+  };
+  return settings;
+}
+
+function validateCoastSeaCornerBiasField() {
+  const settings = coastBiasTestSettings();
+  const params = settings.coast;
+  const seaBorders = new Set(["south", "east"]);
+  const seed = 0;
+  const field = (point) => coastLayersAt(point, settings.size, seaBorders, params, seed).combined;
+
+  const southEastCorner = field({x: 950, y: 950});
+  const eastMiddle = field({x: 950, y: 500});
+  const northEastCorner = field({x: 950, y: 50});
+  const inland = field({x: 500, y: 500});
+
+  assert.ok(southEastCorner < eastMiddle);
+  assert.ok(eastMiddle < northEastCorner);
+  assert.ok(eastMiddle < inland);
+}
+
+function createCoastBiasGridFixture(seed = "coast-bias-grid") {
+  const settings = coastBiasTestSettings(seed);
+  const map = new Map(settings);
+  const boundaries = [100, 300, 500, 700, 900];
+
+  for (let yIndex = 0; yIndex < boundaries.length - 1; yIndex += 1) {
+    for (let xIndex = 0; xIndex < boundaries.length - 1; xIndex += 1) {
+      const x0 = boundaries[xIndex];
+      const x1 = boundaries[xIndex + 1];
+      const y0 = boundaries[yIndex];
+      const y1 = boundaries[yIndex + 1];
+      const id = `cell-${xIndex}-${yIndex}`;
+      const topLeft = Node(`${id}-tl`, x0, y0, "grid");
+      const topRight = Node(`${id}-tr`, x1, y0, "grid");
+      const bottomRight = Node(`${id}-br`, x1, y1, "grid");
+      const bottomLeft = Node(`${id}-bl`, x0, y1, "grid");
+      map.nodes.push(topLeft, topRight, bottomRight, bottomLeft);
+
+      const top = Edge(`${id}-top`, topLeft, topRight, "grid");
+      const right = Edge(`${id}-right`, topRight, bottomRight, "grid");
+      const bottom = Edge(`${id}-bottom`, bottomRight, bottomLeft, "grid");
+      const left = Edge(`${id}-left`, bottomLeft, topLeft, "grid");
+      const cell = Cell(id, [top, right, bottom, left]);
+      top.leftCell = cell;
+      right.leftCell = cell;
+      bottom.leftCell = cell;
+      left.leftCell = cell;
+      map.edges.push(top, right, bottom, left);
+      map.cells.push(cell);
+    }
+  }
+
+  return {settings, map};
+}
+
+function validateCoastBiasClassificationKeepsSeaPercent() {
+  const {settings, map} = createCoastBiasGridFixture();
+  const result = classifySeaLand({
+    ...settings,
+    rng: settings.createStepRng("Coast"),
+    coast: settings.coast,
+  }, map);
+
+  const seaCells = result.cells.filter((cell) => cell.type === TERRAIN_SEA);
+  const southEastCell = result.cells.find((cell) => cell.id === "cell-3-3");
+  const northEastCell = result.cells.find((cell) => cell.id === "cell-3-0");
+  const northWestCell = result.cells.find((cell) => cell.id === "cell-0-0");
+
+  assert.equal(seaCells.length, Math.floor(settings.coast.seaPercent * result.cells.length));
+  assert.equal(southEastCell.type, TERRAIN_SEA);
+  assert.equal(northEastCell.type, TERRAIN_LAND);
+  assert.equal(northWestCell.type, TERRAIN_LAND);
+}
+
+function createGridTerrainFixture({width, height, sea = [], seed = "river-grid"}) {
+  const settings = new Settings(seed);
+  settings.size = Math.max(width, height) * 100;
+  const map = new Map(settings);
+  const seaKeys = new Set(sea.map(([x, y]) => `${x},${y}`));
+  const nodes = [];
+  for (let y = 0; y <= height; y += 1) {
+    nodes[y] = [];
+    for (let x = 0; x <= width; x += 1) {
+      const boundary = x === 0 || y === 0 || x === width || y === height ? ["Boundary"] : [];
+      const node = Node(`n-${x}-${y}`, x * 100, y * 100, "grid", null, boundary);
+      nodes[y][x] = node;
+      map.nodes.push(node);
+    }
+  }
+
+  const edgeByKey = new globalThis.Map();
+  function edgeBetween(a, b) {
+    const key = [a.id, b.id].sort().join("|");
+    if (!edgeByKey.has(key)) {
+      const boundary = (a.x === b.x && (a.x === 0 || a.x === width * 100))
+        || (a.y === b.y && (a.y === 0 || a.y === height * 100))
+        ? ["Boundary"]
+        : [];
+      const edge = Edge(`e-${edgeByKey.size}`, a, b, "grid", null, boundary);
+      edgeByKey.set(key, edge);
+      map.edges.push(edge);
+    }
+    return edgeByKey.get(key);
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const top = edgeBetween(nodes[y][x], nodes[y][x + 1]);
+      const right = edgeBetween(nodes[y][x + 1], nodes[y + 1][x + 1]);
+      const bottom = edgeBetween(nodes[y + 1][x + 1], nodes[y + 1][x]);
+      const left = edgeBetween(nodes[y + 1][x], nodes[y][x]);
+      const cell = Cell(`c-${x}-${y}`, [top, right, bottom, left]);
+      cell.type = seaKeys.has(`${x},${y}`) ? TERRAIN_SEA : TERRAIN_LAND;
+      map.cells.push(cell);
+
+      for (const edge of cell.edges) {
+        if (!edge.leftCell) edge.leftCell = cell;
+        else edge.rightCell = cell;
+      }
+    }
+  }
+
+  for (const edge of map.edges) {
+    const left = edge.leftCell?.type;
+    const right = edge.rightCell?.type;
+    if (left === TERRAIN_SEA && right === TERRAIN_SEA) edge.flags.add(TERRAIN_SEA);
+    else if (left === TERRAIN_LAND && (right === TERRAIN_LAND || !right)) edge.flags.add(TERRAIN_LAND);
+    else if (right === TERRAIN_LAND && !left) edge.flags.add(TERRAIN_LAND);
+    else if (left || right) edge.flags.add(TERRAIN_COAST);
+  }
+
+  return {settings, map};
+}
+
+function validateRiversClassifyOpenAndInnerSeas() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 8,
+    height: 5,
+    sea: [[0, 2], [3, 2]],
+    seed: "river-seas",
+  });
+
+  const result = computeLegacyRivers({
+    ...settings,
+    rng: settings.createStepRng("Rivers"),
+  }, map);
+  const openSea = result.cells.find(cell => cell.id === "c-0-2");
+  const innerSea = result.cells.find(cell => cell.id === "c-3-2");
+
+  assert.equal(openSea.seaKind, "OPEN_SEA");
+  assert.equal(innerSea.seaKind, "INNER_SEA");
+  assert.ok(openSea.flags.has("OPEN_SEA"));
+  assert.ok(innerSea.flags.has("INNER_SEA"));
+}
+
+function validateRiversComputeDistanceAndBanks() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 8,
+    height: 5,
+    sea: [[0, 2], [3, 2]],
+    seed: "river-banks",
+  });
+
+  const result = computeLegacyRivers({
+    ...settings,
+    rng: settings.createStepRng("Rivers"),
+  }, map);
+  const bankGroup = result.areas.find(group => group.name === "river-banks");
+  const bankA = bankGroup?.areas.find(area => area.name === "BANK-A");
+  const bankB = bankGroup?.areas.find(area => area.name === "BANK-B");
+  const exitCandidates = result.cells.filter(cell => cell.type === TERRAIN_LAND && cell.edges.some(edge => edge.flags.has("Boundary")) && cell.seaD >= 5);
+
+  assert.ok(exitCandidates.length > 0);
+  assert.ok(bankA?.cells.length > 0);
+  assert.ok(bankB?.cells.length > 0);
+  assert.ok(bankA.cells.every(cell => result.cells.includes(cell)));
+  assert.ok(bankB.cells.every(cell => result.cells.includes(cell)));
+}
+
+function validateRiversRejectShortEdges() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 8,
+    height: 5,
+    sea: [[0, 2]],
+    seed: "river-short-edge",
+  });
+  const firstLand = map.cells.find(cell => cell.id === "c-1-2");
+  const nextLand = map.cells.find(cell => cell.id === "c-2-2");
+  const shared = firstLand.edges.find(edge => edge.leftCell === nextLand || edge.rightCell === nextLand);
+  shared.end.x = shared.start.x + MIN_EDGE_SIZE;
+  shared.end.y = shared.start.y;
+
+  const result = computeLegacyRivers({
+    ...settings,
+    rng: settings.createStepRng("Rivers"),
+  }, map);
+  const {calls, svg} = createSvgProbe();
+  shared.draw(svg);
+
+  assert.equal(calls[0].attrs.stroke, "red");
+  assert.ok(result.cells.every(cell => cell !== firstLand || cell.seaD !== undefined));
+}
+
+function validateRiverSelectionFallsBackToNearestBankRatio() {
+  const {map} = createGridTerrainFixture({
+    width: 4,
+    height: 3,
+    sea: [],
+    seed: "river-ratio-fallback",
+  });
+  const landmass = map.cells;
+  const riverCells = [
+    map.cells.find(cell => cell.id === "c-1-0"),
+    map.cells.find(cell => cell.id === "c-1-1"),
+    map.cells.find(cell => cell.id === "c-1-2"),
+  ];
+
+  const selected = selectRiver([{riverCells}], landmass);
+
+  assert.ok(selected);
+  assert.equal(selected.matchesBankRatio, false);
+  assert.equal(selected.bankRatio, 0.25);
+  assert.equal(selected.bankA.length, 3);
+}
+
+function setGridSeaD(map, seaDById) {
+  for (const cell of map.cells) {
+    cell.seaD = seaDById(cell);
+    cell.cellToSea = cell.seaD;
+  }
+}
+
+function sharedCellEdge(cellA, cellB) {
+  return cellA.edges.find(edge => edge.leftCell === cellB || edge.rightCell === cellB);
+}
+
+function shortenSharedCellEdge(cellA, cellB) {
+  const edge = sharedCellEdge(cellA, cellB);
+  edge.end.x = edge.start.x + MIN_EDGE_SIZE;
+  edge.end.y = edge.start.y;
+  return edge;
+}
+
+function validateAStarRiversRegisteredInPipeline() {
+  const riverStep = steps.find(step => step.title === "Rivers");
+  assert.equal(riverStep?.process, computeAStarRivers);
+}
+
+function validateAStarRiverRejectsShortEdges() {
+  const {map} = createGridTerrainFixture({
+    width: 2,
+    height: 1,
+    sea: [],
+    seed: "river-astar-short-edge",
+  });
+  const start = map.cells.find(cell => cell.id === "c-0-0");
+  const exit = map.cells.find(cell => cell.id === "c-1-0");
+  setGridSeaD(map, cell => cell === start ? 1 : 2);
+  shortenSharedCellEdge(start, exit);
+
+  const candidate = findAStarPath({
+    mouth: {cell: start, seaCell: null},
+    exit,
+    selectedLandSet: new Set(map.cells),
+  });
+
+  assert.equal(candidate, null);
+}
+
+function validateAStarRiverRequiresInitialSeaDIncrease() {
+  const {map} = createGridTerrainFixture({
+    width: 6,
+    height: 4,
+    sea: [],
+    seed: "river-astar-sead",
+  });
+  const byId = id => map.cells.find(cell => cell.id === id);
+  const start = byId("c-1-1");
+  const exit = byId("c-5-2");
+  setGridSeaD(map, cell => {
+    if (cell.id === "c-1-1") return 1;
+    if (cell.id === "c-2-1") return 1;
+    const [, x, y] = cell.id.match(/^c-(\d+)-(\d+)$/).map(Number);
+    return x + y - 1;
+  });
+
+  const candidate = findAStarPath({
+    mouth: {cell: start, seaCell: null},
+    exit,
+    selectedLandSet: new Set(map.cells),
+  });
+
+  assert.ok(candidate);
+  assert.deepEqual(
+    candidate.riverCells.slice(0, 5).map(cell => cell.id),
+    ["c-1-1", "c-1-2", "c-2-2", "c-3-2", "c-4-2"],
+  );
+}
+
+function validateAStarRiverCannotReturnNearSeaAfterFourCellsAway() {
+  const {map} = createGridTerrainFixture({
+    width: 6,
+    height: 1,
+    sea: [],
+    seed: "river-astar-no-return-near-sea",
+  });
+  const byId = id => map.cells.find(cell => cell.id === id);
+  const start = byId("c-0-0");
+  const exit = byId("c-5-0");
+  setGridSeaD(map, cell => {
+    const x = Number(cell.id.match(/^c-(\d+)-/)[1]);
+    if (x <= 4) return x + 1;
+    return 3;
+  });
+
+  const candidate = findAStarPath({
+    mouth: {cell: start, seaCell: null},
+    exit,
+    selectedLandSet: new Set(map.cells),
+  });
+
+  assert.equal(candidate, null);
+}
+
+function validateAStarRiverFailsOnIntermediateBoundaryCell() {
+  const {map} = createGridTerrainFixture({
+    width: 6,
+    height: 2,
+    sea: [],
+    seed: "river-astar-intermediate-boundary",
+  });
+  const byId = id => map.cells.find(cell => cell.id === id);
+  const start = byId("c-0-0");
+  const exit = byId("c-5-0");
+  setGridSeaD(map, cell => {
+    const [, x, y] = cell.id.match(/^c-(\d+)-(\d+)$/).map(Number);
+    if (y === 0) return x + 1;
+    return x + 2;
+  });
+
+  const candidate = findAStarPath({
+    mouth: {cell: start, seaCell: null},
+    exit,
+    selectedLandSet: new Set(map.cells),
+  });
+
+  assert.equal(candidate, null);
+}
+
+function validateAStarRiverFallsBackFromBlockedFarthestExit() {
+  const {map} = createGridTerrainFixture({
+    width: 3,
+    height: 1,
+    sea: [],
+    seed: "river-astar-exit-fallback",
+  });
+  const byId = id => map.cells.find(cell => cell.id === id);
+  const start = byId("c-0-0");
+  const nearExit = byId("c-1-0");
+  const farExit = byId("c-2-0");
+  setGridSeaD(map, cell => Number(cell.id.match(/^c-(\d+)-/)[1]) + 1);
+  shortenSharedCellEdge(nearExit, farExit);
+
+  const search = findBestAStarRiver({
+    openMouths: [{cell: start, seaCell: null}],
+    exitCells: [nearExit, farExit],
+    selectedLandSet: new Set(map.cells),
+    mapSize: map.size,
+  });
+
+  assert.equal(search.attemptedPaths, 2);
+  assert.equal(search.selected?.exit, nearExit);
+  assert.deepEqual(search.selected?.riverCells.map(cell => cell.id), ["c-0-0", "c-1-0"]);
+}
+
+function validateAStarRiverSelectsLongestPathCost() {
+  const {map} = createGridTerrainFixture({
+    width: 6,
+    height: 3,
+    sea: [],
+    seed: "river-astar-longest",
+  });
+  const byId = id => map.cells.find(cell => cell.id === id);
+  setGridSeaD(map, cell => Number(cell.id.match(/^c-(\d+)-/)[1]) + 1);
+
+  const mouth = {cell: byId("c-1-1"), seaCell: null};
+  const search = findBestAStarRiver({
+    openMouths: [mouth],
+    exitCells: [byId("c-3-1"), byId("c-5-1")],
+    selectedLandSet: new Set(map.cells),
+    mapSize: map.size,
+  });
+
+  assert.ok(search.selected);
+  assert.equal(search.selected.exit, byId("c-5-1"));
+  assert.ok(search.selected.pathCost > search.validRivers.find(candidate => candidate.exit === byId("c-3-1")).pathCost);
+}
+
+function validateAStarRiverSelectsDisplayWinners() {
+  const cell = id => ({id});
+  const byCellCount = {
+    riverCells: [cell("cell-a"), cell("cell-b"), cell("cell-c"), cell("cell-d")],
+    pathCost: 40,
+    mouthExitDistance: 20,
+  };
+  const byPathCost = {
+    riverCells: [cell("path-a"), cell("path-b"), cell("path-c")],
+    pathCost: 90,
+    mouthExitDistance: 30,
+  };
+  const byMouthExitDistance = {
+    riverCells: [cell("straight-a"), cell("straight-b")],
+    pathCost: 50,
+    mouthExitDistance: 120,
+  };
+
+  const selected = selectDisplayRivers([byCellCount, byPathCost, byMouthExitDistance]);
+
+  assert.equal(selected.byCellCount, byCellCount);
+  assert.equal(selected.byPathCost, byPathCost);
+  assert.equal(selected.byMouthExitDistance, byMouthExitDistance);
+}
+
 function validateCoastReplayMatchesFinalClassification() {
   const {settings, map} = createTwoCellCoastFixture("coast-replay-final");
   const processed = classifySeaLand({
@@ -754,6 +1219,7 @@ function smoothingFrameTypes(replay) {
 
 validateCloneIdentityAndFlags();
 validateSnapshotDrawingUsesClonedNodes();
+validateClonePreservesCellToSeaReference();
 validatePipelineClonesBeforeSteps();
 validatePipelineSkipsReplayHotpath();
 validateScatterReplay();
@@ -767,6 +1233,20 @@ validatePruneRemovesAndRewires();
 validatePruneCellDeletion();
 validatePruneBoundaryRules();
 validateSeaLandStepClassifiesAndTags();
+validateCoastSeaCornerBiasField();
+validateCoastBiasClassificationKeepsSeaPercent();
+validateRiversClassifyOpenAndInnerSeas();
+validateRiversComputeDistanceAndBanks();
+validateRiversRejectShortEdges();
+validateRiverSelectionFallsBackToNearestBankRatio();
+validateAStarRiversRegisteredInPipeline();
+validateAStarRiverRejectsShortEdges();
+validateAStarRiverRequiresInitialSeaDIncrease();
+validateAStarRiverCannotReturnNearSeaAfterFourCellsAway();
+validateAStarRiverFailsOnIntermediateBoundaryCell();
+validateAStarRiverFallsBackFromBlockedFarthestExit();
+validateAStarRiverSelectsLongestPathCost();
+validateAStarRiverSelectsDisplayWinners();
 validateCoastReplayMatchesFinalClassification();
 validateCoastReplayDefaultFrames();
 validateCoastReplayOverlayIsolation();

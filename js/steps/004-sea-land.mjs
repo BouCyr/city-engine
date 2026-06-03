@@ -12,6 +12,11 @@ const HEATMAP_GRID_SIZE = 48;
 const DEFAULT_COAST = {
   seaBorders: ["WEST"],
   seaPercent: 0.28,
+  distanceWeight: 1.35,
+  edgeBias: 0.35,
+  edgeBiasReach: 0.22,
+  cornerBias: 0.55,
+  cornerBiasReach: 0.70,
   largeScale: 900,
   mediumScale: 350,
   smallScale: 120,
@@ -59,6 +64,11 @@ function normalizeSettings(coastSettings) {
     ...DEFAULT_COAST,
     seaBorders: safeCoastSettings.seaBorders || DEFAULT_COAST.seaBorders,
     seaPercent: Math.max(0, Math.min(1, toNumber(safeCoastSettings.seaPercent, DEFAULT_COAST.seaPercent))),
+    distanceWeight: Math.max(0, toNumber(safeCoastSettings.distanceWeight, DEFAULT_COAST.distanceWeight)),
+    edgeBias: Math.max(0, toNumber(safeCoastSettings.edgeBias, DEFAULT_COAST.edgeBias)),
+    edgeBiasReach: Math.max(0.001, toNumber(safeCoastSettings.edgeBiasReach, DEFAULT_COAST.edgeBiasReach)),
+    cornerBias: Math.max(0, toNumber(safeCoastSettings.cornerBias, DEFAULT_COAST.cornerBias)),
+    cornerBiasReach: Math.max(0.001, toNumber(safeCoastSettings.cornerBiasReach, DEFAULT_COAST.cornerBiasReach)),
     largeScale: toNumberArray(safeCoastSettings.largeScale, DEFAULT_COAST.largeScale),
     mediumScale: toNumberArray(safeCoastSettings.mediumScale, DEFAULT_COAST.mediumScale),
     smallScale: toNumberArray(safeCoastSettings.smallScale, DEFAULT_COAST.smallScale),
@@ -103,15 +113,18 @@ function toSigned(value) {
   return value * 2 - 1;
 }
 
-function coastLayersAt(point, size, seaBorders, params, seed) {
-  const distances = [];
-
-  if (seaBorders.has("north")) distances.push(point.y / size);
-  if (seaBorders.has("south")) distances.push((size - point.y) / size);
-  if (seaBorders.has("west")) distances.push(point.x / size);
-  if (seaBorders.has("east")) distances.push((size - point.x) / size);
-
+export function coastLayersAt(point, size, seaBorders, params, seed) {
+  const borderDistances = {
+    north: point.y / size,
+    south: (size - point.y) / size,
+    west: point.x / size,
+    east: (size - point.x) / size,
+  };
+  const distances = Array.from(seaBorders).map(border => borderDistances[border]).filter(Number.isFinite);
   const baseDistance = distances.length > 0 ? Math.min(...distances) : 1;
+  const weightedDistance = baseDistance * params.distanceWeight;
+  const edgeBias = params.edgeBias * edgeFalloff(baseDistance, params.edgeBiasReach);
+  const cornerBias = params.cornerBias * selectedSeaCornerProximity(borderDistances, seaBorders, params.cornerBiasReach);
 
   const large = toSigned(valueNoise2D(point.x, point.y, params.largeScale, seed)) * params.largeAmplitude;
   const medium = toSigned(valueNoise2D(point.x, point.y, params.mediumScale, seed + 1)) * params.mediumAmplitude;
@@ -119,11 +132,39 @@ function coastLayersAt(point, size, seaBorders, params, seed) {
 
   return {
     distance: baseDistance,
+    weightedDistance,
+    edgeBias,
+    cornerBias,
     large,
     medium,
     small,
-    combined: baseDistance + large + medium + small,
+    combined: weightedDistance + large + medium + small - edgeBias - cornerBias,
   };
+}
+
+function selectedSeaCornerProximity(borderDistances, seaBorders, reach) {
+  const cornerPairs = [
+    ["north", "west"],
+    ["north", "east"],
+    ["south", "west"],
+    ["south", "east"],
+  ];
+
+  return cornerPairs
+    .filter(([first, second]) => seaBorders.has(first) && seaBorders.has(second))
+    .reduce((best, [first, second]) => {
+      const proximity = edgeFalloff(borderDistances[first], reach) * edgeFalloff(borderDistances[second], reach);
+      return Math.max(best, proximity);
+    }, 0);
+}
+
+function edgeFalloff(distance, reach) {
+  return 1 - smoothstep(0, reach, distance);
+}
+
+function smoothstep(edge0, edge1, value) {
+  const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
 }
 
 function fieldAt(point, size, seaBorders, params, seed) {
@@ -347,17 +388,18 @@ function buildCoast(settings, map, options = {}) {
   });
 
   // 2. Determine dynamic threshold for the LOWEST % sea
-  const sortedValues = cellFields.map(cf => cf.value).sort((a, b) => a - b);
   const seaCount = Math.floor(params.seaPercent * map.cells.length);
+  const sortedCellFields = [...cellFields].sort((a, b) => a.value - b.value);
+  const seaCells = new Set(sortedCellFields.slice(0, seaCount).map(cf => cf.cell));
   // Threshold is the value at the boundary of the sea percentage
-  const dynamicThreshold = seaCount > 0 ? sortedValues[seaCount - 1] : -Infinity;
+  const dynamicThreshold = seaCount > 0 ? sortedCellFields[seaCount - 1].value : -Infinity;
 
   // Store the calculated threshold for UI and Replay consistency
   params.threshold = dynamicThreshold;
 
   // 3. Classify cells (Lowest values are SEA)
-  cellFields.forEach(({cell, value}) => {
-    const terrain = value < dynamicThreshold ? TERRAIN_SEA : TERRAIN_LAND;
+  cellFields.forEach(({cell}) => {
+    const terrain = seaCells.has(cell) ? TERRAIN_SEA : TERRAIN_LAND;
     cell.type = terrain;
     setTerrainFlags(cell, terrain);
     cell.draw = null;
@@ -486,7 +528,25 @@ function pushFieldReplayFrames(frames, settings, map, seaBorders, params, noiseS
   const layers = [
     {
       label: "Sea border distance",
-      text: "A base distance field measures how far each point is from the selected sea border set.",
+      text: `A weighted distance field measures how far each point is from the selected sea border set with weight ${formatNumber(params.distanceWeight)}.`,
+      kind: "weightedDistance",
+      signed: false,
+    },
+    {
+      label: "Selected border bias",
+      text: `Selected sea borders pull nearby cells toward sea with strength ${formatNumber(params.edgeBias)} over reach ${formatNumber(params.edgeBiasReach)}.`,
+      kind: "edgeBias",
+      signed: false,
+    },
+    {
+      label: "Selected corner bias",
+      text: `Corners where two selected sea borders meet pull cells toward sea with strength ${formatNumber(params.cornerBias)} over reach ${formatNumber(params.cornerBiasReach)}.`,
+      kind: "cornerBias",
+      signed: false,
+    },
+    {
+      label: "Raw border distance",
+      text: "The raw nearest-border distance is kept available as a reference layer.",
       kind: "distance",
       signed: false,
     },
@@ -510,7 +570,7 @@ function pushFieldReplayFrames(frames, settings, map, seaBorders, params, noiseS
     },
     {
       label: "Combined field",
-      text: `Distance and noise layers are added together; the ${Math.round(params.seaPercent * 100)}% of cells closest to sea borders (lowest values) become sea.`,
+      text: `Weighted distance, selected-border bias, selected-corner bias, and noise are combined; the ${Math.round(params.seaPercent * 100)}% of lowest field values become sea.`,
       kind: "combined",
       signed: false,
       threshold: params.threshold,

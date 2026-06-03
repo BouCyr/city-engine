@@ -3,8 +3,7 @@ import * as GATHER  from "./steps/001-gather.mjs";
 import * as LLOYD  from "./steps/002-lloyd.mjs";
 import * as PRUNE  from "./steps/003-prune.mjs";
 import * as SEA_LAND from "./steps/004-sea-land.mjs";
-import * as RIVERS from "./steps/005-rivers.mjs";
-import * as RIVERS2 from "./steps/005.2-rivers.mjs";
+import * as RIVERS from "./steps/005.2-rivers.mjs";
 
 
 export const steps = [
@@ -62,11 +61,11 @@ export const steps = [
     process:SEA_LAND.classifySeaLand,
     createReplay: SEA_LAND.createReplay,
     description: (settings, stepMap) => [
-      `This step classifies each current cell into <em>SEA</em> or <em>LAND</em> by combining a distance-from-sea-border field with layered deterministic noise.`,
+      `This step classifies each current cell into <em>SEA</em> or <em>LAND</em> by combining a weighted distance-from-sea-border field, selected sea-corner bias, and layered deterministic noise.`,
       `It stores terrain in <em>cell.type</em> and flags, updates every edge as <em>SEA</em>, <em>LAND</em>, or <em>COAST</em>, and then renders nodes as hidden for this terrain-only view.`,
     ],
     explanation: (settings, stepResult) => [
-      `Coast turns the pruned cell graph into terrain by measuring distance from the selected sea borders, then bending that distance field with deterministic large, medium, and small noise layers.`,
+      `Coast turns the pruned cell graph into terrain by measuring weighted distance from the selected sea borders, then favoring selected sea-border corners before bending the field with deterministic large, medium, and small noise layers.`,
       `Each cell is classified only from its centroid. If the centroid field value meets the land threshold, the cell starts as <em>LAND</em>; otherwise it starts as <em>SEA</em>.`,
       `The replay then shows each smoothing pass, artifact cleanup for tiny isolated components, and final edge classification. Edges between unlike terrain become <em>COAST</em>, while matching neighbors remain <em>SEA</em> or <em>LAND</em>.`,
       `The final Coast result contains <em>${stepResult?.map?.cells?.length ?? 0}</em> terrain cells and <em>${stepResult?.map?.edges?.length ?? 0}</em> classified edges.`,
@@ -75,17 +74,16 @@ export const steps = [
   },
   {
     title:"Rivers",
-    process:RIVERS2.computeRivers,
+    process:RIVERS.computeRivers,
     createReplay: null,
     description: (settings, stepMap) => [
-      `This step classifies each current cell into <em>SEA</em> or <em>LAND</em> by combining a distance-from-sea-border field with layered deterministic noise.`,
-      `It stores terrain in <em>cell.type</em> and flags, updates every edge as <em>SEA</em>, <em>LAND</em>, or <em>COAST</em>, and then renders nodes as hidden for this terrain-only view.`,
+      `This step separates open sea from inner seas, recomputes distance-to-open-sea data, and searches from open-sea mouths toward distant boundary exits.`,
+      `For each mouth, it tries A* paths to exits from farthest to nearest, rejects short-edge crossings, and displays the best valid rivers by three length measures.`,
     ],
     explanation: (settings, stepResult) => [
-      `Coast turns the pruned cell graph into terrain by measuring distance from the selected sea borders, then bending that distance field with deterministic large, medium, and small noise layers.`,
-      `Each cell is classified only from its centroid. If the centroid field value meets the land threshold, the cell starts as <em>LAND</em>; otherwise it starts as <em>SEA</em>.`,
-      `The replay then shows each smoothing pass, artifact cleanup for tiny isolated components, and final edge classification. Edges between unlike terrain become <em>COAST</em>, while matching neighbors remain <em>SEA</em> or <em>LAND</em>.`,
-      `The final Coast result contains <em>${stepResult?.map?.cells?.length ?? 0}</em> terrain cells and <em>${stepResult?.map?.edges?.length ?? 0}</em> classified edges.`,
+      `Rivers starts only from mouth candidates on the largest landmass and adjacent to open sea. Mouths are tried from farthest to nearest relative to the map center, then exits are tried from farthest to nearest relative to each mouth.`,
+      `A* moves cell to cell through shared edges, costs each move through the shared-edge midpoint, requires the first four moves to increase distance from open sea, and blocks routes that return near sea after reaching seaD 4.`,
+      `The overlay draws the longest river by cell count in blue, the longest routed geometric path in green, and the longest straight mouth-to-exit geometric distance in violet.`,
     ],
     renderExplanationExtras: null,
   }
