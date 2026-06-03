@@ -3,7 +3,7 @@ import {cloneDeepKeepFunctions} from "../data/clone.mjs";
 import {createDrawEdgeFn} from "../data/edge.mjs";
 import * as H from "../data/helper.mjs";
 
-export const MIN_EDGE_SIZE = 50;
+export const MIN_EDGE_SIZE = 40;
 
 const OPEN_SEA = "OPEN_SEA";
 const INNER_SEA = "INNER_SEA";

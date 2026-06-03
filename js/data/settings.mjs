@@ -1,6 +1,6 @@
 import {createRNG} from "./RNG.mjs";
 
-export function Settings(seed="seed") {
+export function Settings(seed="4564") {
 
   return {
     seed: seed,
