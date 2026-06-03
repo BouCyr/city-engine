@@ -142,7 +142,7 @@ export function createReplay(settings, inputMap) {
   frames.push(replayFrame(map, "Valid unselected river", "One valid route reaches its exit but is not selected.", overlay));
 
   appendRiverReplayOverlay(overlay, {river: attempts.selected});
-  frames.push(replayFrame(map, "Selected river", "The selected route has the longest straight mouth-to-exit distance.", overlay));
+  frames.push(replayFrame(map, "Selected river", "Among the five longest straight mouth-to-exit candidates, the selected route has the highest exit seaD.", overlay));
 
   return {frames};
 }
@@ -557,7 +557,10 @@ export function findMouthCandidates(map, seaComponents) {
 }
 
 export function selectSelectedRiver(candidates) {
-  return [...candidates].sort(compareByMouthExitDistance)[0] ?? null;
+  return [...candidates]
+    .sort(compareByMouthExitDistance)
+    .slice(0, 5)
+    .sort(compareByExitSeaD)[0] ?? null;
 }
 
 function compareByPathCost(a, b) {
@@ -569,6 +572,11 @@ function compareByPathCost(a, b) {
 function compareByMouthExitDistance(a, b) {
   return b.mouthExitDistance - a.mouthExitDistance
     || compareByPathCost(a, b);
+}
+
+function compareByExitSeaD(a, b) {
+  return (b.exit?.seaD ?? 0) - (a.exit?.seaD ?? 0)
+    || compareByMouthExitDistance(a, b);
 }
 
 function lowestScoreState(keys, scores, states) {

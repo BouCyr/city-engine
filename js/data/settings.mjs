@@ -1,4 +1,3 @@
-import * as C from "../constants.mjs";
 import {createRNG} from "./RNG.mjs";
 
 export function Settings(seed="seed") {
@@ -6,13 +5,13 @@ export function Settings(seed="seed") {
   return {
     seed: seed,
     createStepRng: (stepName) => createRNG(`${seed}:${stepName}`),
-    size : C.SIZE,
+    size : 3000,
     scatter: {
-      nb: C.POI_NB,
-      safeZone: C.SAFE_ZONE,
+      nb: 2000,
+      safeZone: 75,
     },
     prune: {
-      threshold: C.PRUNE_THRESHOLD,
+      threshold: 20,
     },
     coast: {
       seaBorders: ["WEST","SOUTH"],

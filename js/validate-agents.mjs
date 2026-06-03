@@ -1034,7 +1034,7 @@ function validateAStarRiverFallsBackFromBlockedFarthestExit() {
   assert.deepEqual(search.selected?.riverCells.map(cell => cell.id), ["c-0-0", "c-1-0"]);
 }
 
-function validateAStarRiverSelectsLongestMouthExitDistance() {
+function validateAStarRiverSelectsHighestSeaDExitWithinTopFiveDistance() {
   const {map} = createGridTerrainFixture({
     width: 6,
     height: 3,
@@ -1058,27 +1058,29 @@ function validateAStarRiverSelectsLongestMouthExitDistance() {
   assert.ok(search.selected.mouthExitDistance > search.validRivers.find(candidate => candidate.exit === byId("c-3-1")).mouthExitDistance);
 }
 
-function validateAStarRiverSelectedIsMouthExitDistanceWinner() {
+function validateAStarRiverSelectedUsesTopFiveDistanceThenExitSeaD() {
   const cell = id => ({id});
-  const byCellCount = {
-    riverCells: [cell("cell-a"), cell("cell-b"), cell("cell-c"), cell("cell-d")],
-    pathCost: 40,
-    mouthExitDistance: 20,
-  };
-  const byPathCost = {
-    riverCells: [cell("path-a"), cell("path-b"), cell("path-c")],
-    pathCost: 90,
-    mouthExitDistance: 30,
-  };
-  const byMouthExitDistance = {
-    riverCells: [cell("straight-a"), cell("straight-b")],
-    pathCost: 50,
-    mouthExitDistance: 120,
-  };
+  const candidate = (id, mouthExitDistance, seaD) => ({
+    riverCells: [cell(`${id}-a`), cell(`${id}-b`)],
+    pathCost: mouthExitDistance,
+    mouthExitDistance,
+    exit: {id: `${id}-exit`, seaD},
+  });
+  const outsideTopFive = candidate("outside", 50, 99);
+  const topFiveLowSeaD = candidate("top-low", 100, 2);
+  const selectedBySeaD = candidate("top-best", 99, 9);
+  const candidates = [
+    topFiveLowSeaD,
+    selectedBySeaD,
+    candidate("top-3", 98, 4),
+    candidate("top-4", 97, 3),
+    candidate("top-5", 96, 5),
+    outsideTopFive,
+  ];
 
-  const selected = selectSelectedRiver([byCellCount, byPathCost, byMouthExitDistance]);
+  const selected = selectSelectedRiver(candidates);
 
-  assert.equal(selected, byMouthExitDistance);
+  assert.equal(selected, selectedBySeaD);
 }
 
 function validateAStarRiverDrawsOnlyCurvedPath() {
@@ -1399,8 +1401,8 @@ validateAStarRiverRequiresInitialSeaDIncrease();
 validateAStarRiverCannotReturnNearSeaAfterFourCellsAway();
 validateAStarRiverFailsOnIntermediateBoundaryCell();
 validateAStarRiverFallsBackFromBlockedFarthestExit();
-validateAStarRiverSelectsLongestMouthExitDistance();
-validateAStarRiverSelectedIsMouthExitDistanceWinner();
+validateAStarRiverSelectsHighestSeaDExitWithinTopFiveDistance();
+validateAStarRiverSelectedUsesTopFiveDistanceThenExitSeaD();
 validateAStarRiverDrawsOnlyCurvedPath();
 validateAStarRiversReplayFrames();
 validateCoastReplayMatchesFinalClassification();
