@@ -10,6 +10,7 @@ const MAX_COMPUTE_MS = 1000;
 const MIN_EXIT_OPEN_SEA_DISTANCE = 5;
 const INITIAL_SEAD_INCREASE_STEPS = 4;
 const MIN_LOCKED_SEA_DISTANCE = 4;
+const RIVER_COLOR = "var(--sea-edge)";
 
 export function computeRivers(settings, map) {
   const startedAt = now();
@@ -43,7 +44,7 @@ export function computeRivers(settings, map) {
 
   console.info(`Rivers A*: found ${openSeaComponents.length} open sea components`);
   console.info(`Rivers A*: found ${seaComponents.length - openSeaComponents.length} inner sea components`);
-  computeDistanceFromOpenSea(selectedLandmass, selectedLandSet, openSeaComponents);
+  computeDistanceFromSea(selectedLandmass, selectedLandSet, seaComponents);
   console.info(`Rivers A*: selected ${selectedLandmass.length} cells (${formatPercent(selectedLandmass.length / map.cells.length)}) as landmass`);
 
   const exitCells = selectedLandmass
@@ -83,8 +84,8 @@ export function computeRivers(settings, map) {
     return map;
   }
 
-  logSelectedRivers(search.selectedRivers);
-  drawSelectedRivers(search.selectedRivers, map);
+  console.info(`Rivers A*: selected ${formatRiver(search.selected)}`);
+  drawRiver(search.selected, map, RIVER_COLOR);
   console.info(`Rivers A*: done in ${Math.round(now() - startedAt)}ms`);
 
   return map;
@@ -102,10 +103,8 @@ export function findBestAStarRiver({openMouths, exitCells, selectedLandSet, mapS
     for (const exit of sortedExits) {
       if (now() > deadline) {
         timedOut = true;
-        const selectedRivers = selectDisplayRivers(validRivers);
         return {
-          selected: selectedRivers.byPathCost,
-          selectedRivers,
+          selected: selectSelectedRiver(validRivers),
           validRivers,
           attemptedPaths,
           timedOut,
@@ -119,11 +118,9 @@ export function findBestAStarRiver({openMouths, exitCells, selectedLandSet, mapS
   }
 
   console.info(`Rivers A*: found ${validRivers.length} valid river candidates`);
-  const selectedRivers = selectDisplayRivers(validRivers);
 
   return {
-    selected: selectedRivers.byPathCost,
-    selectedRivers,
+    selected: selectSelectedRiver(validRivers),
     validRivers,
     attemptedPaths,
     timedOut,
@@ -138,6 +135,7 @@ export function findAStarPath({mouth, exit, selectedLandSet}) {
     cell: start,
     steps: 0,
     lockedAwayFromSea: isLockedAwayFromSea(start),
+    visitedCells: new Set([start]),
   };
   const startKey = pathStateKey(startState);
   const states = new Map([[startKey, startState]]);
@@ -172,11 +170,13 @@ export function findAStarPath({mouth, exit, selectedLandSet}) {
       if (mustIncreaseSeaD && !increasesSeaD(current, next)) continue;
       if (currentState.lockedAwayFromSea && !isLockedAwayFromSea(next)) continue;
       if (next !== exit && touchesBoundary(next)) continue;
+      if (currentState.visitedCells.has(next)) continue;
 
       const nextState = {
         cell: next,
         steps: Math.min(currentState.steps + 1, INITIAL_SEAD_INCREASE_STEPS),
         lockedAwayFromSea: currentState.lockedAwayFromSea || isLockedAwayFromSea(next),
+        visitedCells: new Set([...currentState.visitedCells, next]),
       };
       const nextKey = pathStateKey(nextState);
       states.set(nextKey, nextState);
@@ -234,9 +234,9 @@ function classifySeaComponents(map) {
   return seaComponents;
 }
 
-function computeDistanceFromOpenSea(selectedLandmass, selectedLandSet, openSeaComponents) {
+function computeDistanceFromSea(selectedLandmass, selectedLandSet, seaComponents) {
   const starts = [];
-  for (const component of openSeaComponents) {
+  for (const component of seaComponents) {
     for (const seaCell of component.cells) {
       for (const {cell: landCell} of typedNeighbors(seaCell, "LAND")) {
         if (!selectedLandSet.has(landCell) || landCell.seaD !== undefined) continue;
@@ -257,7 +257,7 @@ function computeDistanceFromOpenSea(selectedLandmass, selectedLandSet, openSeaCo
   }
 }
 
-function findMouthCandidates(map, seaComponents) {
+export function findMouthCandidates(map, seaComponents) {
   const seaComponentByCell = new Map();
   seaComponents.forEach(component => {
     component.cells.forEach(cell => seaComponentByCell.set(cell, component));
@@ -271,7 +271,8 @@ function findMouthCandidates(map, seaComponents) {
   const seen = new Set();
   for (const seaCell of seaMouthCandidates) {
     const seaComponent = seaComponentByCell.get(seaCell);
-    for (const {cell: landCell} of typedNeighbors(seaCell, "LAND")) {
+    for (const {cell: landCell, edge} of typedNeighbors(seaCell, "LAND")) {
+      if (H.edgeLength(edge) < MIN_EDGE_SIZE) continue;
       const seaNeighbors = typedNeighbors(landCell, "SEA").map(neighbor => neighbor.cell);
       if (seaNeighbors.length !== 1 || seaNeighbors[0] !== seaCell) continue;
       const key = `${landCell.id}:${seaCell.id}`;
@@ -285,21 +286,8 @@ function findMouthCandidates(map, seaComponents) {
   return mouths;
 }
 
-export function selectDisplayRivers(candidates) {
-  return {
-    byCellCount: selectRiverBy(candidates, compareByCellCount),
-    byPathCost: selectRiverBy(candidates, compareByPathCost),
-    byMouthExitDistance: selectRiverBy(candidates, compareByMouthExitDistance),
-  };
-}
-
-function selectRiverBy(candidates, comparator) {
-  return [...candidates].sort(comparator)[0] ?? null;
-}
-
-function compareByCellCount(a, b) {
-  return b.riverCells.length - a.riverCells.length
-    || compareByPathCost(a, b);
+export function selectSelectedRiver(candidates) {
+  return [...candidates].sort(compareByMouthExitDistance)[0] ?? null;
 }
 
 function compareByPathCost(a, b) {
@@ -349,18 +337,6 @@ function movementCost(current, next, edge) {
 
 function mouthExitDistance(mouth, exit) {
   return H.distance(H.cellCentroid(mouth.cell), H.cellCentroid(exit));
-}
-
-function drawSelectedRivers(selectedRivers, map) {
-  drawRiver(selectedRivers.byCellCount, map, "blue");
-  drawRiver(selectedRivers.byPathCost, map, "green");
-  drawRiver(selectedRivers.byMouthExitDistance, map, "violet");
-}
-
-function logSelectedRivers(selectedRivers) {
-  console.info(`Rivers A*: selected by cell count: ${formatRiver(selectedRivers.byCellCount)}`);
-  console.info(`Rivers A*: selected by path cost: ${formatRiver(selectedRivers.byPathCost)}`);
-  console.info(`Rivers A*: selected by mouth-exit distance: ${formatRiver(selectedRivers.byMouthExitDistance)}`);
 }
 
 function formatRiver(candidate) {

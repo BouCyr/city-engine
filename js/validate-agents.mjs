@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {cloneDeepKeepFunctions} from "./data/clone.mjs";
 import {Cell} from "./data/cell.mjs";
 import {Edge} from "./data/edge.mjs";
+import * as H from "./data/helper.mjs";
 import {Map} from "./data/map.mjs";
 import {Node, Poi} from "./data/nodes.mjs";
 import {Settings} from "./data/settings.mjs";
@@ -24,7 +25,8 @@ import {
   computeRivers as computeAStarRivers,
   findAStarPath,
   findBestAStarRiver,
-  selectDisplayRivers,
+  findMouthCandidates,
+  selectSelectedRiver,
 } from "./steps/005.2-rivers.mjs";
 
 function createSvgProbe() {
@@ -821,9 +823,63 @@ function shortenSharedCellEdge(cellA, cellB) {
   return edge;
 }
 
+function makeSharedCellEdgeShorterThanMinimum(cellA, cellB) {
+  const edge = sharedCellEdge(cellA, cellB);
+  edge.end.x = edge.start.x + MIN_EDGE_SIZE - 1;
+  edge.end.y = edge.start.y;
+  return edge;
+}
+
+function assertNoRepeatedRiverCells(candidate) {
+  const ids = candidate.riverCells.map(cell => cell.id);
+  assert.equal(new Set(ids).size, ids.length);
+}
+
 function validateAStarRiversRegisteredInPipeline() {
   const riverStep = steps.find(step => step.title === "Rivers");
   assert.equal(riverStep?.process, computeAStarRivers);
+}
+
+function validateAStarRiversComputeDistanceFromInnerSeas() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 8,
+    height: 5,
+    sea: [[0, 2], [4, 2]],
+    seed: "river-astar-inner-sea-distance",
+  });
+
+  const result = computeAStarRivers({
+    ...settings,
+    rng: settings.createStepRng("Rivers"),
+  }, map);
+  const innerSea = result.cells.find(cell => cell.id === "c-4-2");
+  const innerAdjacentLand = result.cells.find(cell => cell.id === "c-5-2");
+
+  assert.equal(innerSea.seaKind, "INNER_SEA");
+  assert.equal(innerAdjacentLand.seaD, 1);
+  assert.equal(innerAdjacentLand.toSea, innerSea);
+}
+
+function validateAStarRiverRejectsShortCoastMouthEdges() {
+  const {map} = createGridTerrainFixture({
+    width: 3,
+    height: 3,
+    sea: [[1, 1]],
+    seed: "river-astar-short-mouth-edge",
+  });
+  const seaCell = map.cells.find(cell => cell.id === "c-1-1");
+  const rejectedLandCell = map.cells.find(cell => cell.id === "c-2-1");
+  makeSharedCellEdgeShorterThanMinimum(seaCell, rejectedLandCell);
+
+  const mouths = findMouthCandidates(map, [{
+    id: "sea-0",
+    kind: "OPEN_SEA",
+    cells: [seaCell],
+  }]);
+
+  assert.ok(mouths.length > 0);
+  assert.equal(mouths.some(mouth => mouth.cell === rejectedLandCell), false);
+  assert.ok(mouths.every(mouth => H.edgeLength(sharedCellEdge(mouth.seaCell, mouth.cell)) >= MIN_EDGE_SIZE));
 }
 
 function validateAStarRiverRejectsShortEdges() {
@@ -871,6 +927,7 @@ function validateAStarRiverRequiresInitialSeaDIncrease() {
   });
 
   assert.ok(candidate);
+  assertNoRepeatedRiverCells(candidate);
   assert.deepEqual(
     candidate.riverCells.slice(0, 5).map(cell => cell.id),
     ["c-1-1", "c-1-2", "c-2-2", "c-3-2", "c-4-2"],
@@ -950,10 +1007,11 @@ function validateAStarRiverFallsBackFromBlockedFarthestExit() {
 
   assert.equal(search.attemptedPaths, 2);
   assert.equal(search.selected?.exit, nearExit);
+  assertNoRepeatedRiverCells(search.selected);
   assert.deepEqual(search.selected?.riverCells.map(cell => cell.id), ["c-0-0", "c-1-0"]);
 }
 
-function validateAStarRiverSelectsLongestPathCost() {
+function validateAStarRiverSelectsLongestMouthExitDistance() {
   const {map} = createGridTerrainFixture({
     width: 6,
     height: 3,
@@ -972,11 +1030,12 @@ function validateAStarRiverSelectsLongestPathCost() {
   });
 
   assert.ok(search.selected);
+  assertNoRepeatedRiverCells(search.selected);
   assert.equal(search.selected.exit, byId("c-5-1"));
-  assert.ok(search.selected.pathCost > search.validRivers.find(candidate => candidate.exit === byId("c-3-1")).pathCost);
+  assert.ok(search.selected.mouthExitDistance > search.validRivers.find(candidate => candidate.exit === byId("c-3-1")).mouthExitDistance);
 }
 
-function validateAStarRiverSelectsDisplayWinners() {
+function validateAStarRiverSelectedIsMouthExitDistanceWinner() {
   const cell = id => ({id});
   const byCellCount = {
     riverCells: [cell("cell-a"), cell("cell-b"), cell("cell-c"), cell("cell-d")],
@@ -994,11 +1053,9 @@ function validateAStarRiverSelectsDisplayWinners() {
     mouthExitDistance: 120,
   };
 
-  const selected = selectDisplayRivers([byCellCount, byPathCost, byMouthExitDistance]);
+  const selected = selectSelectedRiver([byCellCount, byPathCost, byMouthExitDistance]);
 
-  assert.equal(selected.byCellCount, byCellCount);
-  assert.equal(selected.byPathCost, byPathCost);
-  assert.equal(selected.byMouthExitDistance, byMouthExitDistance);
+  assert.equal(selected, byMouthExitDistance);
 }
 
 function validateCoastReplayMatchesFinalClassification() {
@@ -1240,13 +1297,15 @@ validateRiversComputeDistanceAndBanks();
 validateRiversRejectShortEdges();
 validateRiverSelectionFallsBackToNearestBankRatio();
 validateAStarRiversRegisteredInPipeline();
+validateAStarRiversComputeDistanceFromInnerSeas();
+validateAStarRiverRejectsShortCoastMouthEdges();
 validateAStarRiverRejectsShortEdges();
 validateAStarRiverRequiresInitialSeaDIncrease();
 validateAStarRiverCannotReturnNearSeaAfterFourCellsAway();
 validateAStarRiverFailsOnIntermediateBoundaryCell();
 validateAStarRiverFallsBackFromBlockedFarthestExit();
-validateAStarRiverSelectsLongestPathCost();
-validateAStarRiverSelectsDisplayWinners();
+validateAStarRiverSelectsLongestMouthExitDistance();
+validateAStarRiverSelectedIsMouthExitDistanceWinner();
 validateCoastReplayMatchesFinalClassification();
 validateCoastReplayDefaultFrames();
 validateCoastReplayOverlayIsolation();

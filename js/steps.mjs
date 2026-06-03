@@ -78,12 +78,12 @@ export const steps = [
     createReplay: null,
     description: (settings, stepMap) => [
       `This step separates open sea from inner seas, recomputes distance-to-open-sea data, and searches from open-sea mouths toward distant boundary exits.`,
-      `For each mouth, it tries A* paths to exits from farthest to nearest, rejects short-edge crossings, and displays the best valid rivers by three length measures.`,
+      `For each mouth, it tries A* paths to exits from farthest to nearest, rejects short-edge crossings, and selects the valid river with the longest straight mouth-to-exit distance.`,
     ],
     explanation: (settings, stepResult) => [
       `Rivers starts only from mouth candidates on the largest landmass and adjacent to open sea. Mouths are tried from farthest to nearest relative to the map center, then exits are tried from farthest to nearest relative to each mouth.`,
-      `A* moves cell to cell through shared edges, costs each move through the shared-edge midpoint, requires the first four moves to increase distance from open sea, and blocks routes that return near sea after reaching seaD 4.`,
-      `The overlay draws the longest river by cell count in blue, the longest routed geometric path in green, and the longest straight mouth-to-exit geometric distance in violet.`,
+      `A* moves cell to cell through shared edges, costs each move through the shared-edge midpoint, requires the first four moves to increase distance from the nearest sea, and blocks routes that return near sea after reaching seaD 4.`,
+      `The overlay draws the selected straight-distance winner with the same blue used for sea edges.`,
     ],
     renderExplanationExtras: null,
   }
