@@ -111,6 +111,7 @@ export function serializeMap(map) {
     rivers: (map.rivers ?? []).map((river) => ({
       id: river.id,
       type: river.type,
+      role: river.role ?? null,
       order: river.order,
       sourceRiverId: river.sourceRiverId ?? null,
       pathCost: river.pathCost ?? 0,
@@ -204,6 +205,7 @@ export function hydrateMap(data) {
   map.rivers = (data?.rivers ?? []).map((riverData) => ({
     id: riverData.id,
     type: riverData.type,
+    role: riverData.role ?? null,
     order: riverData.order,
     sourceRiverId: riverData.sourceRiverId ?? null,
     pathCost: riverData.pathCost ?? 0,

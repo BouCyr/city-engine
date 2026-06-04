@@ -66,13 +66,17 @@ export function computeTributaries(settings, map) {
     const meanderedTributary = meanderRiverCandidate({
       candidate: tributary,
       selectedLandSet: bankSetWithMouth(bank, tributary.mouth),
-      riverSettings: settings?.rivers,
+      riverSettings: {
+        ...(settings?.rivers ?? {}),
+        minLockedSeaDistance: tributarySettings.seaDThreshold,
+      },
     });
     const normalized = normalizeRiver(meanderedTributary, {
       type: "TRIBUTARY",
       id: `river-${rivers.length}`,
       order: rivers.length,
       sourceRiverId: mainRiver.id ?? "river-0",
+      role: rivers.length === 1 ? "FIRST_TRIBUTARY" : "SECOND_TRIBUTARY",
     });
     rivers.push(normalized);
     previousTributaryMouth = normalized.mouth.cell;
@@ -81,7 +85,7 @@ export function computeTributaries(settings, map) {
 
   map.rivers = rivers;
   map.drawOverlay = null;
-  drawRivers(map.rivers, map, tributarySettings.color);
+  drawRivers(map.rivers, map);
   console.info(`Tributaries: done in ${Math.round(now() - startedAt)}ms with ${rivers.length - 1} tributaries`);
 
   return map;

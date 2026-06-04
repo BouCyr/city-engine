@@ -5,6 +5,10 @@ import * as H from "../data/helper.mjs";
 import {Settings} from "../data/settings.mjs";
 
 const DEFAULT_RIVER_SETTINGS = new Settings().rivers;
+const RIVER_COLOR = "var(--sea-edge)";
+const RIVER_ROLE_PRIMARY = "PRIMARY";
+const RIVER_ROLE_FIRST_TRIBUTARY = "FIRST_TRIBUTARY";
+const RIVER_ROLE_SECOND_TRIBUTARY = "SECOND_TRIBUTARY";
 
 export const MIN_EDGE_SIZE = DEFAULT_RIVER_SETTINGS.minEdgeSize;
 
@@ -91,10 +95,10 @@ export function computeRivers(settings, map) {
     selectedLandSet,
     riverSettings,
   });
-  const selectedRiver = normalizeRiver(meanderedRiver, {type: "MAIN", id: "river-0", order: 0});
+  const selectedRiver = normalizeRiver(meanderedRiver, {type: "MAIN", id: "river-0", order: 0, role: RIVER_ROLE_PRIMARY});
   map.rivers = [selectedRiver];
   console.info(`Rivers A*: selected ${formatRiver(selectedRiver)}`);
-  drawRivers(map.rivers, map, riverSettings.color);
+  drawRivers(map.rivers, map, RIVER_COLOR);
   console.info(`Rivers A*: done in ${Math.round(now() - startedAt)}ms`);
 
   return map;
@@ -134,28 +138,28 @@ export function createReplay(settings, inputMap) {
   const overlay = emptyRiverReplayOverlaySpec();
   const frames = [];
 
-  appendRiverReplayOverlay(overlay, {lowSeaDCells: selectedLandmass.filter(cell => (cell.seaD ?? 0) < riverSettings.minLockedSeaDistance), color: riverSettings.color});
+  appendRiverReplayOverlay(overlay, {lowSeaDCells: selectedLandmass.filter(cell => (cell.seaD ?? 0) < riverSettings.minLockedSeaDistance), color: RIVER_COLOR});
   frames.push(replayFrame(map, "SeaD threshold", "Cells below the sea-distance threshold used for initial direction and sea avoidance are highlighted.", overlay));
 
-  appendRiverReplayOverlay(overlay, {mouths: openMouths, color: riverSettings.color});
+  appendRiverReplayOverlay(overlay, {mouths: openMouths, color: RIVER_COLOR});
   frames.push(replayFrame(map, "Mouth computation", "Eligible land mouths adjacent to open sea are highlighted.", overlay));
 
-  appendRiverReplayOverlay(overlay, {exits: exitCells, color: riverSettings.color});
+  appendRiverReplayOverlay(overlay, {exits: exitCells, color: RIVER_COLOR});
   frames.push(replayFrame(map, "Exit computation", "Boundary exit cells far enough from any sea are highlighted.", overlay));
 
-  appendRiverReplayOverlay(overlay, {forbiddenEdges: forbiddenRiverEdges(map, riverSettings), color: riverSettings.color});
+  appendRiverReplayOverlay(overlay, {forbiddenEdges: forbiddenRiverEdges(map, riverSettings), color: RIVER_COLOR});
   frames.push(replayFrame(map, "Forbidden edges", "Land edges too short for rivers to cross are highlighted.", overlay));
 
-  appendRiverReplayOverlay(overlay, {river: attempts.failed, color: riverSettings.color});
+  appendRiverReplayOverlay(overlay, {river: attempts.failed, color: RIVER_COLOR});
   frames.push(replayFrame(map, "Failed river attempt", "One attempted route does not reach its target exit.", overlay));
 
-  appendRiverReplayOverlay(overlay, {river: attempts.unselected, color: riverSettings.color});
+  appendRiverReplayOverlay(overlay, {river: attempts.unselected, color: RIVER_COLOR});
   frames.push(replayFrame(map, "Valid unselected river", "One valid route reaches its exit but is not selected.", overlay));
 
-  appendRiverReplayOverlay(overlay, {river: attempts.selected, color: riverSettings.color});
+  appendRiverReplayOverlay(overlay, {river: attempts.selected, color: RIVER_COLOR});
   frames.push(replayFrame(map, "Selected river", "Among the five longest straight mouth-to-exit candidates, the selected route has the highest exit seaD.", overlay));
 
-  appendRiverReplayOverlay(overlay, {river: attempts.meandered, color: riverSettings.color});
+  appendRiverReplayOverlay(overlay, {river: attempts.meandered, color: RIVER_COLOR});
   frames.push(replayFrame(map, "Meander refinement", "The selected main river is locally rerouted around interior cells when a short deterministic detour can replace a straight segment.", overlay));
 
   return {frames};
@@ -258,7 +262,7 @@ function cloneRiverReplayOverlaySpec(overlay) {
   };
 }
 
-function appendRiverReplayOverlay(overlay, {lowSeaDCells = [], mouths = [], exits = [], forbiddenEdges = [], river = null, color = DEFAULT_RIVER_SETTINGS.color}) {
+function appendRiverReplayOverlay(overlay, {lowSeaDCells = [], mouths = [], exits = [], forbiddenEdges = [], river = null, color = RIVER_COLOR}) {
   overlay.polygons.push(...lowSeaDCells.map(cell => ({
     points: orderedCellPoints(cell).map(point => ({x: point.x, y: point.y})),
     fill: "rgba(239, 68, 68, 0.22)",
@@ -306,7 +310,7 @@ function appendRiverReplayOverlay(overlay, {lowSeaDCells = [], mouths = [], exit
       path.opacity = 0.25;
     });
     overlay.paths.push({
-      d: buildCurvedRiverPath(river),
+      d: buildStraightRiverPath(river),
       stroke: color,
       strokeWidth: 7,
       opacity: 1,
@@ -627,7 +631,7 @@ export function meanderRiverCandidate({candidate, selectedLandSet, riverSettings
     ...candidate,
     riverCells: [...candidate.riverCells],
   };
-  let centerIndex = riverSettings.minExitOpenSeaDistance + riverSettings.meanderHalfWindow;
+  let centerIndex = riverSettings.minExitOpenSeaDistance + riverSettings.meanderForbiddenRadii[0];
 
   while (centerIndex <= maxEligibleMeanderCenter(meandered.riverCells.length, riverSettings)) {
     const replacement = findMeanderReplacement({
@@ -694,17 +698,29 @@ function buildPartialCandidate(cameFrom, states, currentKey, gScore, mouth, exit
 }
 
 function findMeanderReplacement({riverCells, centerIndex, selectedLandSet, riverSettings = DEFAULT_RIVER_SETTINGS}) {
-  const startIndex = centerIndex - riverSettings.meanderHalfWindow;
-  const endIndex = centerIndex + riverSettings.meanderHalfWindow;
-  if (startIndex < 0 || endIndex >= riverCells.length) return null;
-
-  const start = riverCells[startIndex];
-  const exit = riverCells[endIndex];
-  const segmentCells = new Set(riverCells.slice(startIndex, endIndex + 1));
-  const blockedCells = new Set(riverCells.filter(cell => !segmentCells.has(cell)));
   const centerCell = riverCells[centerIndex];
 
   for (const radius of riverSettings.meanderForbiddenRadii) {
+    const startIndex = centerIndex - radius;
+    const endIndex = centerIndex + radius;
+    if (startIndex < 0 || endIndex >= riverCells.length) continue;
+
+    const start = riverCells[startIndex];
+    const exit = riverCells[endIndex];
+    const segmentCells = new Set(riverCells.slice(startIndex, endIndex + 1));
+    const blockedCells = new Set(riverCells.filter(cell => !segmentCells.has(cell)));
+    const belowSeaThresholdCells = new Set(
+      [...selectedLandSet].filter(cell =>
+        cell !== start
+        && cell !== exit
+        && cell.seaD !== undefined
+        && cell.seaD < riverSettings.minLockedSeaDistance
+      )
+    );
+    const maxPathCells = Math.max(
+      endIndex - startIndex + 1,
+      Math.ceil(radius * riverSettings.meanderMaxPathFactor)
+    );
     const forbiddenCells = meanderForbiddenCells({
       centerCell,
       radius,
@@ -716,13 +732,13 @@ function findMeanderReplacement({riverCells, centerIndex, selectedLandSet, river
       exit,
       selectedLandSet,
       initialSeaDIncreaseSteps: 0,
-      lockedSeaDistance: Infinity,
-      blockedCells: new Set([...blockedCells, ...forbiddenCells]),
-      maxPathCells: riverSettings.meanderMaxPathCells,
+      lockedSeaDistance: riverSettings.minLockedSeaDistance,
+      blockedCells: new Set([...blockedCells, ...belowSeaThresholdCells, ...forbiddenCells]),
+      maxPathCells,
       riverSettings,
     });
     if (!candidate) continue;
-    if (candidate.riverCells.length > riverSettings.meanderMaxPathCells) continue;
+    if (candidate.riverCells.length > maxPathCells) continue;
     if (candidate.riverCells.length === endIndex - startIndex + 1 && sameCellSequence(candidate.riverCells, riverCells.slice(startIndex, endIndex + 1))) continue;
     return {
       startIndex,
@@ -759,7 +775,8 @@ function meanderForbiddenCells({centerCell, radius, selectedLandSet, allowedCell
 }
 
 function maxEligibleMeanderCenter(riverLength, riverSettings = DEFAULT_RIVER_SETTINGS) {
-  return riverLength - riverSettings.minExitOpenSeaDistance - riverSettings.meanderHalfWindow - 1;
+  const maxRadius = Math.max(0, ...(riverSettings.meanderForbiddenRadii ?? []));
+  return riverLength - riverSettings.minExitOpenSeaDistance - maxRadius - 1;
 }
 
 function sameCellSequence(a, b) {
@@ -816,40 +833,50 @@ function formatRiver(candidate) {
     `${Math.round(candidate.mouthExitDistance * 10) / 10} mouth-exit distance`;
 }
 
-export function drawRiver(candidate, map, color = DEFAULT_RIVER_SETTINGS.color) {
+export function drawRiver(candidate, map, color = RIVER_COLOR) {
   if (!candidate) return;
   drawRivers([candidate], map, color);
 }
 
-export function drawRivers(candidates, map, color = DEFAULT_RIVER_SETTINGS.color) {
-  const curvedPaths = (candidates ?? []).map(buildCurvedRiverPath).filter(Boolean);
-  if (curvedPaths.length === 0) return;
+export function drawRivers(candidates, map, color = RIVER_COLOR) {
+  const paths = (candidates ?? []).map(buildStraightRiverPath).filter(Boolean);
+  if (paths.length === 0) return;
   const prevOverlayDraw = map.drawOverlay;
   map.drawOverlay = (svg) => {
     if (prevOverlayDraw) prevOverlayDraw(svg);
     const layer = svg.getElementById("cells");
     if (!layer) return;
-    curvedPaths.forEach(path => appendRiverPath(layer, path, color, "1"));
+    (candidates ?? []).forEach((candidate, index) => appendRiverPath(layer, paths[index], color, "1", riverStrokeWidth(candidate)));
   };
 }
 
-export function buildCurvedRiverPath(candidate) {
+export function buildStraightRiverPath(candidate) {
   const cells = candidate.riverCells;
   if (cells.length === 0) return "";
 
   const segments = [];
+  const entryStart = riverEntryStartPoint(candidate) ?? riverEntryPoint(candidate) ?? H.cellCentroid(cells[0]);
   const entry = riverEntryPoint(candidate) ?? H.cellCentroid(cells[0]);
-  segments.push(`M ${entry.x} ${entry.y}`);
+  segments.push(`M ${entryStart.x} ${entryStart.y}`);
+
+  if (entryStart.x !== entry.x || entryStart.y !== entry.y) {
+    segments.push(`L ${entry.x} ${entry.y}`);
+  }
 
   for (let index = 0; index < cells.length; index += 1) {
-    const current = cells[index];
     const nextPoint = cellRiverExitPoint(candidate, index);
     if (!nextPoint) continue;
-    const control = H.cellCentroid(current);
-    segments.push(`Q ${control.x} ${control.y} ${nextPoint.x} ${nextPoint.y}`);
+    segments.push(`L ${nextPoint.x} ${nextPoint.y}`);
   }
 
   return segments.join(" ");
+}
+
+function riverEntryStartPoint(candidate) {
+  if (candidate.mouth?.riverCell) {
+    return H.cellCentroid(candidate.mouth.riverCell);
+  }
+  return null;
 }
 
 function cellRiverExitPoint(candidate, index) {
@@ -880,12 +907,12 @@ function riverExitPoint(candidate) {
   return exitEdge ? H.midpoint(exitEdge.start, exitEdge.end) : null;
 }
 
-function appendRiverPath(layer, d, color, opacity) {
+function appendRiverPath(layer, d, color, opacity, strokeWidth = 8) {
   if (!d) return;
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
   path.setAttribute("fill", "none");
   path.setAttribute("stroke", color);
-  path.setAttribute("stroke-width", "7");
+  path.setAttribute("stroke-width", String(strokeWidth));
   path.setAttribute("stroke-opacity", opacity);
   path.setAttribute("d", d);
   layer.appendChild(path);
@@ -1019,15 +1046,35 @@ export function riverKey(candidate) {
   return candidate.riverCells.map(cell => cell.id).join("|");
 }
 
-export function normalizeRiver(candidate, {type = "MAIN", id = "river-0", order = 0, sourceRiverId = null} = {}) {
+export function normalizeRiver(candidate, {type = "MAIN", id = "river-0", order = 0, sourceRiverId = null, role = null} = {}) {
   return {
     ...candidate,
     id,
     type,
     order,
     sourceRiverId,
+    role: role ?? inferRiverRole(type, order),
     mouth: normalizeRiverMouth(candidate.mouth),
   };
+}
+
+function inferRiverRole(type, order) {
+  if (type === "MAIN") return RIVER_ROLE_PRIMARY;
+  if (order === 1) return RIVER_ROLE_FIRST_TRIBUTARY;
+  if (order === 2) return RIVER_ROLE_SECOND_TRIBUTARY;
+  return RIVER_ROLE_SECOND_TRIBUTARY;
+}
+
+function riverStrokeWidth(candidate) {
+  switch (candidate?.role) {
+    case RIVER_ROLE_PRIMARY:
+      return 12;
+    case RIVER_ROLE_FIRST_TRIBUTARY:
+    case RIVER_ROLE_SECOND_TRIBUTARY:
+      return 8;
+    default:
+      return candidate?.type === "MAIN" ? 12 : 8;
+  }
 }
 
 function normalizeRiverMouth(mouth) {
