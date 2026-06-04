@@ -1,6 +1,6 @@
 import {createRNG} from "./RNG.mjs";
 
-export function Settings(seed="4564") {
+export function Settings(seed="Hello world!") {
 
   return {
     seed: seed,
@@ -30,6 +30,24 @@ export function Settings(seed="4564") {
       smoothingPasses: 1,
       smoothingBias: 0.52,
       artifactsMax: 1,
+    },
+    rivers: {
+      minEdgeSize: 40,
+      maxComputeMs: 1000,
+      minExitOpenSeaDistance: 5,
+      initialSeaDIncreaseSteps: 4,
+      minLockedSeaDistance: 4,
+      color: "var(--sea-edge)",
+      meanderHalfWindow: 3,
+      meanderForbiddenRadii: [4, 3, 2],
+      meanderMaxPathCells: 12,
+    },
+    tributaries: {
+      maxComputeMs: 1000,
+      color: "var(--sea-edge)",
+      mouthSeaDistance: 3,
+      seaDThreshold: 4,
+      secondMouthMinDistance: 2,
     },
   }
 }
@@ -228,6 +246,122 @@ export const SETTING_GROUPS = [
         min: 1,
         step: 1,
         help: "Flips isolated terrain components up to this cell count.",
+      },
+    ],
+  },
+  {
+    title: "Rivers",
+    settings: [
+      {
+        path: "rivers.minEdgeSize",
+        label: "Min edge size",
+        type: "number",
+        min: 1,
+        step: 1,
+        help: "Rejects coast and land crossings through shared edges at or below this length.",
+      },
+      {
+        path: "rivers.maxComputeMs",
+        label: "Max compute ms",
+        type: "number",
+        min: 1,
+        step: 50,
+        help: "Stops the main-river search once this time budget is exhausted.",
+      },
+      {
+        path: "rivers.minExitOpenSeaDistance",
+        label: "Min exit seaD",
+        type: "number",
+        min: 1,
+        step: 1,
+        help: "Requires river exits to stay at least this many land-cell steps from sea.",
+      },
+      {
+        path: "rivers.initialSeaDIncreaseSteps",
+        label: "Initial seaD rise",
+        type: "number",
+        min: 0,
+        step: 1,
+        help: "Requires the first moves of a main river to increase sea distance.",
+      },
+      {
+        path: "rivers.minLockedSeaDistance",
+        label: "Locked seaD",
+        type: "number",
+        min: 1,
+        step: 1,
+        help: "Once a river reaches this sea distance, later cells cannot drop below it.",
+      },
+      {
+        path: "rivers.color",
+        label: "River color",
+        type: "text",
+        help: "Controls the SVG stroke color used to draw the main river and replay overlays.",
+      },
+      {
+        path: "rivers.meanderHalfWindow",
+        label: "Meander half-window",
+        type: "number",
+        min: 1,
+        step: 1,
+        help: "Uses a centered reroute window of this many cells on each side of the tested river cell.",
+      },
+      {
+        path: "rivers.meanderForbiddenRadii",
+        label: "Meander radii",
+        type: "text",
+        help: "Comma-separated graph-distance radii tried in order when searching river meanders.",
+      },
+      {
+        path: "rivers.meanderMaxPathCells",
+        label: "Meander max cells",
+        type: "number",
+        min: 2,
+        step: 1,
+        help: "Caps the number of cells allowed in each replacement meander segment.",
+      },
+    ],
+  },
+  {
+    title: "Tributaries",
+    settings: [
+      {
+        path: "tributaries.maxComputeMs",
+        label: "Max compute ms",
+        type: "number",
+        min: 1,
+        step: 50,
+        help: "Stops each bank tributary search once this time budget is exhausted.",
+      },
+      {
+        path: "tributaries.color",
+        label: "Tributary color",
+        type: "text",
+        help: "Controls the SVG stroke color used when tributaries are drawn.",
+      },
+      {
+        path: "tributaries.mouthSeaDistance",
+        label: "Mouth seaD",
+        type: "number",
+        min: 1,
+        step: 1,
+        help: "Requires tributary mouths to stay at least this many land-cell steps from sea.",
+      },
+      {
+        path: "tributaries.seaDThreshold",
+        label: "Exit seaD",
+        type: "number",
+        min: 1,
+        step: 1,
+        help: "Requires tributary exits, and the locked/increasing sea-distance path rule, to use at least this sea distance.",
+      },
+      {
+        path: "tributaries.secondMouthMinDistance",
+        label: "Second mouth gap",
+        type: "number",
+        min: 0,
+        step: 1,
+        help: "Keeps the second tributary mouth at least this many land-cell steps away from the first.",
       },
     ],
   },

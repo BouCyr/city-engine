@@ -80,10 +80,12 @@ export const steps = [
     description: (settings, stepMap) => [
       `This step separates open sea from inner seas, recomputes distance-to-open-sea data, and searches from open-sea mouths toward distant boundary exits.`,
       `For each mouth, it tries A* paths to exits from farthest to nearest, rejects short-edge crossings, and selects the highest-seaD exit among the five longest straight mouth-to-exit candidates.`,
+      `After selection, it tries short local reroutes on the main river to replace straight interior segments with deterministic meanders while keeping the same mouth and exit.`,
     ],
     explanation: (settings, stepResult) => [
       `Rivers starts only from mouth candidates on the largest landmass and adjacent to open sea. Mouths are tried from farthest to nearest relative to the map center, then exits are tried from farthest to nearest relative to each mouth.`,
       `A* moves cell to cell through shared edges, costs each move through the shared-edge midpoint, requires the first four moves to increase distance from the nearest sea, and blocks routes that return near sea after reaching seaD 4.`,
+      `Once the winning path is chosen, a second pass scans interior river cells and attempts bounded A* detours around them. Each detour must avoid nearby cells around the tested bend point, must stay off the rest of the river, and must remain short enough to keep the overall route controlled.`,
       `The overlay draws the selected top-five/highest-seaD winner with the same blue used for sea edges.`,
     ],
     renderExplanationExtras: null,
@@ -95,6 +97,7 @@ export const steps = [
       `This step reads the selected main river from <em>map.rivers</em>, splits its landmass into river banks, and tries to add one tributary per bank.`,
       `Tributary mouths must be land cells next to the main river, at least four land-cell steps away from sea, and the second tributary mouth must stay at least two cell steps away from the first.`,
       `Each tributary measures distance from either sea or the main river, requires the first eight path cells to grow that distance, and selects the route with the best combined main-exit distance, exit seaD, and first-third mouth-position score.`,
+      `After selection, each tributary also gets the same local meander refinement when the bank still contains a valid short detour.`,
     ],
     explanation: (settings, stepResult) => [
       `Tributaries are stored after the main river in <em>map.rivers</em>. The step keeps the main river as the first entry and appends up to two tributaries.`,

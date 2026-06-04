@@ -2,20 +2,21 @@ import {createDrawCellFn, orderedCellPoints} from "../data/cell.mjs";
 import {cloneDeepKeepFunctions} from "../data/clone.mjs";
 import {createDrawEdgeFn} from "../data/edge.mjs";
 import * as H from "../data/helper.mjs";
+import {Settings} from "../data/settings.mjs";
 
-export const MIN_EDGE_SIZE = 40;
+const DEFAULT_RIVER_SETTINGS = new Settings().rivers;
+
+export const MIN_EDGE_SIZE = DEFAULT_RIVER_SETTINGS.minEdgeSize;
 
 export const OPEN_SEA = "OPEN_SEA";
 export const INNER_SEA = "INNER_SEA";
-const MAX_COMPUTE_MS = 1000;
-export const MIN_EXIT_OPEN_SEA_DISTANCE = 5;
-const INITIAL_SEAD_INCREASE_STEPS = 4;
-export const MIN_LOCKED_SEA_DISTANCE = 4;
-const RIVER_COLOR = "var(--sea-edge)";
+export const MIN_EXIT_OPEN_SEA_DISTANCE = DEFAULT_RIVER_SETTINGS.minExitOpenSeaDistance;
+export const MIN_LOCKED_SEA_DISTANCE = DEFAULT_RIVER_SETTINGS.minLockedSeaDistance;
 
 export function computeRivers(settings, map) {
   const startedAt = now();
-  const deadline = startedAt + MAX_COMPUTE_MS;
+  const riverSettings = resolveRiverSettings(settings);
+  const deadline = startedAt + riverSettings.maxComputeMs;
   console.info("Rivers A*: starting");
 
   clearRiverState(map);
@@ -48,7 +49,7 @@ export function computeRivers(settings, map) {
   console.info(`Rivers A*: selected ${selectedLandmass.length} cells (${formatPercent(selectedLandmass.length / map.cells.length)}) as landmass`);
 
   const exitCells = selectedLandmass
-    .filter(cell => cell.seaD >= MIN_EXIT_OPEN_SEA_DISTANCE)
+    .filter(cell => cell.seaD >= riverSettings.minExitOpenSeaDistance)
     .filter(cell => cell.edges.some(edge => edge.flags?.has("Boundary")));
   if (exitCells.length === 0) {
     console.info("Rivers A*: no eligible exit cells found");
@@ -73,6 +74,7 @@ export function computeRivers(settings, map) {
     selectedLandSet,
     mapSize: map.size,
     deadline,
+    riverSettings,
   });
   console.info(
     `Rivers A*: search ${search.timedOut ? "timed out" : "finished"} after ${Math.round(now() - startedAt)}ms, ` +
@@ -84,16 +86,22 @@ export function computeRivers(settings, map) {
     return map;
   }
 
-  const selectedRiver = normalizeRiver(search.selected, {type: "MAIN", id: "river-0", order: 0});
+  const meanderedRiver = meanderRiverCandidate({
+    candidate: search.selected,
+    selectedLandSet,
+    riverSettings,
+  });
+  const selectedRiver = normalizeRiver(meanderedRiver, {type: "MAIN", id: "river-0", order: 0});
   map.rivers = [selectedRiver];
   console.info(`Rivers A*: selected ${formatRiver(selectedRiver)}`);
-  drawRivers(map.rivers, map, RIVER_COLOR);
+  drawRivers(map.rivers, map, riverSettings.color);
   console.info(`Rivers A*: done in ${Math.round(now() - startedAt)}ms`);
 
   return map;
 }
 
 export function createReplay(settings, inputMap) {
+  const riverSettings = resolveRiverSettings(settings);
   const map = cloneDeepKeepFunctions(inputMap);
   clearRiverState(map);
 
@@ -110,7 +118,7 @@ export function createReplay(settings, inputMap) {
   computeDistanceFromSea(selectedLandmass, selectedLandSet, seaComponents);
 
   const exitCells = selectedLandmass
-    .filter(cell => cell.seaD >= MIN_EXIT_OPEN_SEA_DISTANCE)
+    .filter(cell => cell.seaD >= riverSettings.minExitOpenSeaDistance)
     .filter(cell => cell.edges.some(edge => edge.flags?.has("Boundary")));
   const mouthCandidates = findMouthCandidates(map, seaComponents)
     .filter(mouth => selectedLandSet.has(mouth.cell));
@@ -121,35 +129,39 @@ export function createReplay(settings, inputMap) {
     exitCells,
     selectedLandSet,
     mapSize: map.size,
+    riverSettings,
   });
   const overlay = emptyRiverReplayOverlaySpec();
   const frames = [];
 
-  appendRiverReplayOverlay(overlay, {lowSeaDCells: selectedLandmass.filter(cell => (cell.seaD ?? 0) < MIN_LOCKED_SEA_DISTANCE)});
+  appendRiverReplayOverlay(overlay, {lowSeaDCells: selectedLandmass.filter(cell => (cell.seaD ?? 0) < riverSettings.minLockedSeaDistance), color: riverSettings.color});
   frames.push(replayFrame(map, "SeaD threshold", "Cells below the sea-distance threshold used for initial direction and sea avoidance are highlighted.", overlay));
 
-  appendRiverReplayOverlay(overlay, {mouths: openMouths});
+  appendRiverReplayOverlay(overlay, {mouths: openMouths, color: riverSettings.color});
   frames.push(replayFrame(map, "Mouth computation", "Eligible land mouths adjacent to open sea are highlighted.", overlay));
 
-  appendRiverReplayOverlay(overlay, {exits: exitCells});
+  appendRiverReplayOverlay(overlay, {exits: exitCells, color: riverSettings.color});
   frames.push(replayFrame(map, "Exit computation", "Boundary exit cells far enough from any sea are highlighted.", overlay));
 
-  appendRiverReplayOverlay(overlay, {forbiddenEdges: forbiddenRiverEdges(map)});
+  appendRiverReplayOverlay(overlay, {forbiddenEdges: forbiddenRiverEdges(map, riverSettings), color: riverSettings.color});
   frames.push(replayFrame(map, "Forbidden edges", "Land edges too short for rivers to cross are highlighted.", overlay));
 
-  appendRiverReplayOverlay(overlay, {river: attempts.failed});
+  appendRiverReplayOverlay(overlay, {river: attempts.failed, color: riverSettings.color});
   frames.push(replayFrame(map, "Failed river attempt", "One attempted route does not reach its target exit.", overlay));
 
-  appendRiverReplayOverlay(overlay, {river: attempts.unselected});
+  appendRiverReplayOverlay(overlay, {river: attempts.unselected, color: riverSettings.color});
   frames.push(replayFrame(map, "Valid unselected river", "One valid route reaches its exit but is not selected.", overlay));
 
-  appendRiverReplayOverlay(overlay, {river: attempts.selected});
+  appendRiverReplayOverlay(overlay, {river: attempts.selected, color: riverSettings.color});
   frames.push(replayFrame(map, "Selected river", "Among the five longest straight mouth-to-exit candidates, the selected route has the highest exit seaD.", overlay));
+
+  appendRiverReplayOverlay(overlay, {river: attempts.meandered, color: riverSettings.color});
+  frames.push(replayFrame(map, "Meander refinement", "The selected main river is locally rerouted around interior cells when a short deterministic detour can replace a straight segment.", overlay));
 
   return {frames};
 }
 
-export function findBestAStarRiver({openMouths, exitCells, selectedLandSet, mapSize, deadline = Infinity}) {
+export function findBestAStarRiver({openMouths, exitCells, selectedLandSet, mapSize, deadline = Infinity, riverSettings = DEFAULT_RIVER_SETTINGS}) {
   const sortedMouths = [...openMouths].sort((a, b) => compareMouthsByCenterDesc(a, b, mapSize));
   const validRivers = [];
   let attemptedPaths = 0;
@@ -170,7 +182,7 @@ export function findBestAStarRiver({openMouths, exitCells, selectedLandSet, mapS
       }
 
       attemptedPaths += 1;
-      const candidate = findAStarPath({mouth, exit, selectedLandSet});
+      const candidate = findAStarPath({mouth, exit, selectedLandSet, riverSettings});
       if (candidate) validRivers.push(candidate);
     }
   }
@@ -185,7 +197,7 @@ export function findBestAStarRiver({openMouths, exitCells, selectedLandSet, mapS
   };
 }
 
-function collectReplayRiverAttempts({openMouths, exitCells, selectedLandSet, mapSize}) {
+function collectReplayRiverAttempts({openMouths, exitCells, selectedLandSet, mapSize, riverSettings = DEFAULT_RIVER_SETTINGS}) {
   const validRivers = [];
   let failed = null;
 
@@ -193,7 +205,7 @@ function collectReplayRiverAttempts({openMouths, exitCells, selectedLandSet, map
   for (const mouth of sortedMouths) {
     const sortedExits = [...exitCells].sort((a, b) => compareExitsFromMouthDesc(a, b, mouth));
     for (const exit of sortedExits) {
-      const result = findAStarPathDetailed({mouth, exit, selectedLandSet});
+      const result = findAStarPathDetailed({mouth, exit, selectedLandSet, riverSettings});
       if (result.candidate) {
         validRivers.push(result.candidate);
       } else if (!failed && result.partial?.riverCells?.length > 1) {
@@ -203,6 +215,11 @@ function collectReplayRiverAttempts({openMouths, exitCells, selectedLandSet, map
   }
 
   const selected = selectSelectedRiver(validRivers);
+  const meandered = selected ? meanderRiverCandidate({
+    candidate: selected,
+    selectedLandSet,
+    riverSettings,
+  }) : null;
   if (!failed && selected?.riverCells?.length > 2) {
     failed = {
       ...selected,
@@ -211,7 +228,7 @@ function collectReplayRiverAttempts({openMouths, exitCells, selectedLandSet, map
   }
   const unselected = validRivers.find(candidate => candidate !== selected) ?? null;
 
-  return {failed, unselected, selected};
+  return {failed, unselected, selected, meandered};
 }
 
 function replayFrame(map, label, text, overlay) {
@@ -241,7 +258,7 @@ function cloneRiverReplayOverlaySpec(overlay) {
   };
 }
 
-function appendRiverReplayOverlay(overlay, {lowSeaDCells = [], mouths = [], exits = [], forbiddenEdges = [], river = null}) {
+function appendRiverReplayOverlay(overlay, {lowSeaDCells = [], mouths = [], exits = [], forbiddenEdges = [], river = null, color = DEFAULT_RIVER_SETTINGS.color}) {
   overlay.polygons.push(...lowSeaDCells.map(cell => ({
     points: orderedCellPoints(cell).map(point => ({x: point.x, y: point.y})),
     fill: "rgba(239, 68, 68, 0.22)",
@@ -290,7 +307,7 @@ function appendRiverReplayOverlay(overlay, {lowSeaDCells = [], mouths = [], exit
     });
     overlay.paths.push({
       d: buildCurvedRiverPath(river),
-      stroke: RIVER_COLOR,
+      stroke: color,
       strokeWidth: 7,
       opacity: 1,
     });
@@ -380,17 +397,44 @@ function replayArrowHead({x1, y1, x2, y2}) {
   ];
 }
 
-function forbiddenRiverEdges(map) {
+function forbiddenRiverEdges(map, riverSettings = DEFAULT_RIVER_SETTINGS) {
   return map.edges
     .filter(edge => edge.flags?.has("LAND"))
-    .filter(edge => H.edgeLength(edge) <= MIN_EDGE_SIZE);
+    .filter(edge => H.edgeLength(edge) <= riverSettings.minEdgeSize);
 }
 
-export function findAStarPath({mouth, exit, selectedLandSet, initialSeaDIncreaseSteps = INITIAL_SEAD_INCREASE_STEPS, lockedSeaDistance = MIN_LOCKED_SEA_DISTANCE}) {
-  return findAStarPathDetailed({mouth, exit, selectedLandSet, initialSeaDIncreaseSteps, lockedSeaDistance}).candidate;
+export function findAStarPath({
+  mouth,
+  exit,
+  selectedLandSet,
+  initialSeaDIncreaseSteps,
+  lockedSeaDistance,
+  blockedCells = new Set(),
+  maxPathCells = Infinity,
+  riverSettings = DEFAULT_RIVER_SETTINGS,
+}) {
+  return findAStarPathDetailed({
+    mouth,
+    exit,
+    selectedLandSet,
+    initialSeaDIncreaseSteps: initialSeaDIncreaseSteps ?? riverSettings.initialSeaDIncreaseSteps,
+    lockedSeaDistance: lockedSeaDistance ?? riverSettings.minLockedSeaDistance,
+    blockedCells,
+    maxPathCells,
+    riverSettings,
+  }).candidate;
 }
 
-export function findAStarPathDetailed({mouth, exit, selectedLandSet, initialSeaDIncreaseSteps = INITIAL_SEAD_INCREASE_STEPS, lockedSeaDistance = MIN_LOCKED_SEA_DISTANCE}) {
+export function findAStarPathDetailed({
+  mouth,
+  exit,
+  selectedLandSet,
+  initialSeaDIncreaseSteps = DEFAULT_RIVER_SETTINGS.initialSeaDIncreaseSteps,
+  lockedSeaDistance = DEFAULT_RIVER_SETTINGS.minLockedSeaDistance,
+  blockedCells = new Set(),
+  maxPathCells = Infinity,
+  riverSettings = DEFAULT_RIVER_SETTINGS,
+}) {
   const start = mouth.cell;
   if (!selectedLandSet.has(start) || !selectedLandSet.has(exit)) {
     return {candidate: null, partial: null};
@@ -422,7 +466,7 @@ export function findAStarPathDetailed({mouth, exit, selectedLandSet, initialSeaD
       const riverCells = reconstructPath(cameFrom, states, currentKey);
       const candidate = {
         riverCells,
-        pathCost: gScore.get(currentKey),
+        pathCost: computeRiverPathCost(riverCells),
         mouthExitDistance: mouthExitDistance(mouth, exit),
         mouth,
         originalMouth: start,
@@ -433,20 +477,24 @@ export function findAStarPathDetailed({mouth, exit, selectedLandSet, initialSeaD
 
     open.delete(currentKey);
     closed.add(currentKey);
+    if (currentState.visitedCells.size >= maxPathCells) continue;
 
-    for (const neighbor of passableLandNeighbors(current, selectedLandSet)) {
+    for (const neighbor of passableLandNeighbors(current, selectedLandSet, riverSettings)) {
       const next = neighbor.cell;
       const mustIncreaseSeaD = currentState.steps < initialSeaDIncreaseSteps;
       if (mustIncreaseSeaD && !increasesSeaD(current, next)) continue;
       if (currentState.lockedAwayFromSea && !isLockedAwayFromSea(next, lockedSeaDistance)) continue;
       if (next !== exit && touchesBoundary(next)) continue;
+      if (next !== exit && next !== start && blockedCells.has(next)) continue;
       if (currentState.visitedCells.has(next)) continue;
 
+      const nextVisitedCells = new Set([...currentState.visitedCells, next]);
+      if (nextVisitedCells.size > maxPathCells) continue;
       const nextState = {
         cell: next,
         steps: Math.min(currentState.steps + 1, initialSeaDIncreaseSteps),
         lockedAwayFromSea: currentState.lockedAwayFromSea || isLockedAwayFromSea(next, lockedSeaDistance),
-        visitedCells: new Set([...currentState.visitedCells, next]),
+        visitedCells: nextVisitedCells,
       };
       const nextKey = pathStateKey(nextState);
       states.set(nextKey, nextState);
@@ -572,6 +620,39 @@ export function compareByPathCost(a, b) {
     || riverKey(a).localeCompare(riverKey(b));
 }
 
+export function meanderRiverCandidate({candidate, selectedLandSet, riverSettings = DEFAULT_RIVER_SETTINGS}) {
+  if (!candidate?.riverCells?.length || !selectedLandSet?.size) return candidate;
+
+  const meandered = {
+    ...candidate,
+    riverCells: [...candidate.riverCells],
+  };
+  let centerIndex = riverSettings.minExitOpenSeaDistance + riverSettings.meanderHalfWindow;
+
+  while (centerIndex <= maxEligibleMeanderCenter(meandered.riverCells.length, riverSettings)) {
+    const replacement = findMeanderReplacement({
+      riverCells: meandered.riverCells,
+      centerIndex,
+      selectedLandSet,
+      riverSettings,
+    });
+    if (!replacement) {
+      centerIndex += 1;
+      continue;
+    }
+
+    meandered.riverCells = [
+      ...meandered.riverCells.slice(0, replacement.startIndex),
+      ...replacement.path,
+      ...meandered.riverCells.slice(replacement.endIndex + 1),
+    ];
+    centerIndex = replacement.startIndex + replacement.path.length;
+  }
+
+  meandered.pathCost = computeRiverPathCost(meandered.riverCells);
+  return meandered;
+}
+
 export function compareByMouthExitDistance(a, b) {
   return b.mouthExitDistance - a.mouthExitDistance
     || compareByPathCost(a, b);
@@ -604,12 +685,85 @@ function buildPartialCandidate(cameFrom, states, currentKey, gScore, mouth, exit
   const riverCells = reconstructPath(cameFrom, states, currentKey);
   return {
     riverCells,
-    pathCost: gScore.get(currentKey) ?? 0,
+    pathCost: gScore.get(currentKey) ?? computeRiverPathCost(riverCells),
     mouthExitDistance: mouthExitDistance(mouth, exit),
     mouth,
     originalMouth: mouth.cell,
     exit,
   };
+}
+
+function findMeanderReplacement({riverCells, centerIndex, selectedLandSet, riverSettings = DEFAULT_RIVER_SETTINGS}) {
+  const startIndex = centerIndex - riverSettings.meanderHalfWindow;
+  const endIndex = centerIndex + riverSettings.meanderHalfWindow;
+  if (startIndex < 0 || endIndex >= riverCells.length) return null;
+
+  const start = riverCells[startIndex];
+  const exit = riverCells[endIndex];
+  const segmentCells = new Set(riverCells.slice(startIndex, endIndex + 1));
+  const blockedCells = new Set(riverCells.filter(cell => !segmentCells.has(cell)));
+  const centerCell = riverCells[centerIndex];
+
+  for (const radius of riverSettings.meanderForbiddenRadii) {
+    const forbiddenCells = meanderForbiddenCells({
+      centerCell,
+      radius,
+      selectedLandSet,
+      allowedCells: new Set([start, exit]),
+    });
+    const candidate = findAStarPath({
+      mouth: {cell: start, seaCell: null},
+      exit,
+      selectedLandSet,
+      initialSeaDIncreaseSteps: 0,
+      lockedSeaDistance: Infinity,
+      blockedCells: new Set([...blockedCells, ...forbiddenCells]),
+      maxPathCells: riverSettings.meanderMaxPathCells,
+      riverSettings,
+    });
+    if (!candidate) continue;
+    if (candidate.riverCells.length > riverSettings.meanderMaxPathCells) continue;
+    if (candidate.riverCells.length === endIndex - startIndex + 1 && sameCellSequence(candidate.riverCells, riverCells.slice(startIndex, endIndex + 1))) continue;
+    return {
+      startIndex,
+      endIndex,
+      path: candidate.riverCells,
+    };
+  }
+
+  return null;
+}
+
+function meanderForbiddenCells({centerCell, radius, selectedLandSet, allowedCells = new Set()}) {
+  if (radius <= 0) return new Set();
+
+  const forbidden = new Set();
+  const frontier = [{cell: centerCell, distance: 0}];
+  const visited = new Set([centerCell]);
+
+  while (frontier.length > 0) {
+    const {cell, distance} = frontier.shift();
+    if (distance < radius && !allowedCells.has(cell)) {
+      forbidden.add(cell);
+    }
+    if (distance >= radius - 1) continue;
+
+    for (const {cell: neighbor} of landNeighbors(cell)) {
+      if (!selectedLandSet.has(neighbor) || visited.has(neighbor)) continue;
+      visited.add(neighbor);
+      frontier.push({cell: neighbor, distance: distance + 1});
+    }
+  }
+
+  return forbidden;
+}
+
+function maxEligibleMeanderCenter(riverLength, riverSettings = DEFAULT_RIVER_SETTINGS) {
+  return riverLength - riverSettings.minExitOpenSeaDistance - riverSettings.meanderHalfWindow - 1;
+}
+
+function sameCellSequence(a, b) {
+  return a.length === b.length && a.every((cell, index) => cell === b[index]);
 }
 
 function isBetterPartial(candidateKey, currentKey, states, gScore, exit) {
@@ -630,13 +784,25 @@ function increasesSeaD(current, next) {
   return (next.seaD ?? 0) > (current.seaD ?? 0);
 }
 
-function isLockedAwayFromSea(cell, lockedSeaDistance = MIN_LOCKED_SEA_DISTANCE) {
+function isLockedAwayFromSea(cell, lockedSeaDistance = DEFAULT_RIVER_SETTINGS.minLockedSeaDistance) {
   return (cell.seaD ?? 0) >= lockedSeaDistance;
 }
 
 function movementCost(current, next, edge) {
   const middle = H.midpoint(edge.start, edge.end);
   return H.distance(H.cellCentroid(current), middle) + H.distance(middle, H.cellCentroid(next));
+}
+
+function computeRiverPathCost(riverCells) {
+  let total = 0;
+  for (let index = 0; index < riverCells.length - 1; index += 1) {
+    const current = riverCells[index];
+    const next = riverCells[index + 1];
+    const edge = H.cellsEdge(current, next);
+    if (!edge) continue;
+    total += movementCost(current, next, edge);
+  }
+  return total;
 }
 
 export function mouthExitDistance(mouth, exit) {
@@ -650,12 +816,12 @@ function formatRiver(candidate) {
     `${Math.round(candidate.mouthExitDistance * 10) / 10} mouth-exit distance`;
 }
 
-export function drawRiver(candidate, map, color = "blue") {
+export function drawRiver(candidate, map, color = DEFAULT_RIVER_SETTINGS.color) {
   if (!candidate) return;
   drawRivers([candidate], map, color);
 }
 
-export function drawRivers(candidates, map, color = "blue") {
+export function drawRivers(candidates, map, color = DEFAULT_RIVER_SETTINGS.color) {
   const curvedPaths = (candidates ?? []).map(buildCurvedRiverPath).filter(Boolean);
   if (curvedPaths.length === 0) return;
   const prevOverlayDraw = map.drawOverlay;
@@ -766,10 +932,25 @@ export function landHopDistances(landSet, starts) {
   return distances;
 }
 
-function passableLandNeighbors(cell, landSet) {
+function passableLandNeighbors(cell, landSet, riverSettings = DEFAULT_RIVER_SETTINGS) {
   return landNeighbors(cell)
     .filter(neighbor => landSet.has(neighbor.cell))
-    .filter(neighbor => H.edgeLength(neighbor.edge) > MIN_EDGE_SIZE);
+    .filter(neighbor => H.edgeLength(neighbor.edge) > riverSettings.minEdgeSize);
+}
+
+function resolveRiverSettings(settings) {
+  return {
+    ...DEFAULT_RIVER_SETTINGS,
+    ...(settings?.rivers ?? {}),
+    meanderForbiddenRadii: normalizeMeanderRadii(settings?.rivers?.meanderForbiddenRadii ?? DEFAULT_RIVER_SETTINGS.meanderForbiddenRadii),
+  };
+}
+
+function normalizeMeanderRadii(value) {
+  const radii = (Array.isArray(value) ? value : DEFAULT_RIVER_SETTINGS.meanderForbiddenRadii)
+    .map(item => Number(item))
+    .filter(item => Number.isFinite(item) && item >= 0);
+  return radii.length > 0 ? radii : [...DEFAULT_RIVER_SETTINGS.meanderForbiddenRadii];
 }
 
 export function landNeighbors(cell) {

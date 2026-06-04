@@ -1,4 +1,5 @@
 import * as H from "../data/helper.mjs";
+import {Settings} from "../data/settings.mjs";
 import {
   compareByPathCost,
   compareCells,
@@ -8,6 +9,7 @@ import {
   landHopDistances,
   landNeighbors,
   largestComponent,
+  meanderRiverCandidate,
   MIN_EDGE_SIZE,
   MIN_LOCKED_SEA_DISTANCE,
   normalizeRiver,
@@ -16,14 +18,11 @@ import {
   typedNeighbors,
 } from "./005.2-rivers.mjs";
 
-const MAX_COMPUTE_MS = 1000;
-const RIVER_COLOR = "var(--sea-edge)";
-const TRIBUTARY_MOUTH_SEA_DISTANCE = 4;
-const TRIBUTARY_SEAD_THRESHOLD = MIN_LOCKED_SEA_DISTANCE * 2;
-const SECOND_TRIBUTARY_MOUTH_MIN_DISTANCE = 2;
+const DEFAULT_TRIBUTARY_SETTINGS = new Settings().tributaries;
 
 export function computeTributaries(settings, map) {
   const startedAt = now();
+  const tributarySettings = resolveTributarySettings(settings);
   console.info("Tributaries: starting");
 
   const mainRiver = map.rivers?.[0];
@@ -51,7 +50,7 @@ export function computeTributaries(settings, map) {
   let previousTributaryMouth = null;
 
   for (const bank of banks.slice(0, 2)) {
-    const deadline = now() + MAX_COMPUTE_MS;
+    const deadline = now() + tributarySettings.maxComputeMs;
     const tributary = findBestTributary({
       bank,
       mainRiver,
@@ -59,11 +58,17 @@ export function computeTributaries(settings, map) {
       seaDistances,
       previousTributaryMouth,
       deadline,
+      tributarySettings,
     });
 
     if (!tributary) continue;
 
-    const normalized = normalizeRiver(tributary, {
+    const meanderedTributary = meanderRiverCandidate({
+      candidate: tributary,
+      selectedLandSet: bankSetWithMouth(bank, tributary.mouth),
+      riverSettings: settings?.rivers,
+    });
+    const normalized = normalizeRiver(meanderedTributary, {
       type: "TRIBUTARY",
       id: `river-${rivers.length}`,
       order: rivers.length,
@@ -76,18 +81,18 @@ export function computeTributaries(settings, map) {
 
   map.rivers = rivers;
   map.drawOverlay = null;
-  drawRivers(map.rivers, map, RIVER_COLOR);
+  drawRivers(map.rivers, map, tributarySettings.color);
   console.info(`Tributaries: done in ${Math.round(now() - startedAt)}ms with ${rivers.length - 1} tributaries`);
 
   return map;
 }
 
-export function findBestTributary({bank, mainRiver, mainRiverSet, seaDistances, previousTributaryMouth = null, deadline = Infinity}) {
+export function findBestTributary({bank, mainRiver, mainRiverSet, seaDistances, previousTributaryMouth = null, deadline = Infinity, tributarySettings = DEFAULT_TRIBUTARY_SETTINGS}) {
   const bankSet = new Set(bank);
   computeDistanceFromSeaOrRiver(bank, bankSet, mainRiverSet);
 
   const exitCells = bank
-    .filter(cell => (cell.seaD ?? 0) >= TRIBUTARY_SEAD_THRESHOLD)
+    .filter(cell => (cell.seaD ?? 0) >= tributarySettings.seaDThreshold)
     .filter(touchesBoundary)
     .sort(compareCells);
   if (exitCells.length === 0) return null;
@@ -97,11 +102,12 @@ export function findBestTributary({bank, mainRiver, mainRiverSet, seaDistances, 
     : new Map();
   const mouths = findTributaryMouthCandidates({
     bank,
-    mainRiverSet,
-    seaDistances,
-    mouthDistances,
-    previousTributaryMouth,
-  });
+      mainRiverSet,
+      seaDistances,
+      mouthDistances,
+      previousTributaryMouth,
+      tributarySettings,
+    });
   if (mouths.length === 0) return null;
 
   const validRivers = [];
@@ -119,8 +125,8 @@ export function findBestTributary({bank, mainRiver, mainRiverSet, seaDistances, 
         mouth,
         exit,
         selectedLandSet: bankSet,
-        initialSeaDIncreaseSteps: TRIBUTARY_SEAD_THRESHOLD,
-        lockedSeaDistance: TRIBUTARY_SEAD_THRESHOLD,
+        initialSeaDIncreaseSteps: tributarySettings.seaDThreshold,
+        lockedSeaDistance: tributarySettings.seaDThreshold,
       });
       if (!candidate) continue;
       validRivers.push({
@@ -143,14 +149,14 @@ export function computeRiverBanks(landmass, riverSet) {
   ));
 }
 
-export function findTributaryMouthCandidates({bank, mainRiverSet, seaDistances, mouthDistances = new Map(), previousTributaryMouth = null}) {
+export function findTributaryMouthCandidates({bank, mainRiverSet, seaDistances, mouthDistances = new Map(), previousTributaryMouth = null, tributarySettings = DEFAULT_TRIBUTARY_SETTINGS}) {
   const mouths = [];
   const seen = new Set();
 
   for (const cell of bank) {
     if (touchesBoundary(cell)) continue;
-    if ((seaDistances.get(cell) ?? 0) < TRIBUTARY_MOUTH_SEA_DISTANCE) continue;
-    if (previousTributaryMouth && (mouthDistances.get(cell) ?? Infinity) < SECOND_TRIBUTARY_MOUTH_MIN_DISTANCE) continue;
+    if ((seaDistances.get(cell) ?? 0) < tributarySettings.mouthSeaDistance) continue;
+    if (previousTributaryMouth && (mouthDistances.get(cell) ?? Infinity) < tributarySettings.secondMouthMinDistance) continue;
 
     for (const {cell: riverCell, edge} of landNeighbors(cell)) {
       if (!mainRiverSet.has(riverCell)) continue;
@@ -201,6 +207,20 @@ function computeSeaOnlyDistances(landSet) {
   }
 
   return landHopDistances(landSet, starts);
+}
+
+function bankSetWithMouth(bank, mouth) {
+  return new Set([
+    ...bank,
+    ...(mouth?.cell ? [mouth.cell] : []),
+  ]);
+}
+
+function resolveTributarySettings(settings) {
+  return {
+    ...DEFAULT_TRIBUTARY_SETTINGS,
+    ...(settings?.tributaries ?? {}),
+  };
 }
 
 export function selectTributary(candidates, mainRiver = null) {

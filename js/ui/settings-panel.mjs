@@ -196,6 +196,18 @@ function readSettingFromControls(panel, definition) {
     return Number.isFinite(numeric) ? numeric : defaultValue;
   }
 
+  if (Array.isArray(defaultValue)) {
+    const values = String(control.value)
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (defaultValue.every((item) => typeof item === "number")) {
+      const numericValues = values.map((value) => Number(value)).filter((value) => Number.isFinite(value));
+      return numericValues.length > 0 ? numericValues : defaultValue;
+    }
+    return values.length > 0 ? values : defaultValue;
+  }
+
   return control.value;
 }
 
