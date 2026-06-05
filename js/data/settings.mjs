@@ -7,7 +7,7 @@ export function Settings(seed="Hello world!") {
     createStepRng: (stepName) => createRNG(`${seed}:${stepName}`),
     size : 3000,
     scatter: {
-      nb: 2000,
+      nb: 1000,
       safeZone: 75,
     },
     prune: {

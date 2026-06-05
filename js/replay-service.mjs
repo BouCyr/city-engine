@@ -17,6 +17,8 @@ export function plainSettings(settings) {
     scatter: {...settings.scatter},
     prune: {...settings.prune},
     coast: {...settings.coast},
+    rivers: {...settings.rivers},
+    tributaries: {...settings.tributaries},
   };
 }
 
@@ -26,6 +28,8 @@ export function hydrateSettings(data) {
   settings.scatter = {...settings.scatter, ...(data?.scatter ?? {})};
   settings.prune = {...settings.prune, ...(data?.prune ?? {})};
   settings.coast = {...settings.coast, ...(data?.coast ?? {})};
+  settings.rivers = {...settings.rivers, ...(data?.rivers ?? {})};
+  settings.tributaries = {...settings.tributaries, ...(data?.tributaries ?? {})};
   return settings;
 }
 
@@ -313,7 +317,9 @@ function drawTerrainCell(svg) {
 }
 
 function drawForEdge(flags) {
-  return flags.includes(TERRAIN_SEA) || flags.includes(TERRAIN_LAND) || flags.includes(TERRAIN_COAST)
+  return flags.includes(TERRAIN_SEA)
+    || flags.includes(TERRAIN_LAND)
+    || flags.includes(TERRAIN_COAST)
     ? drawTerrainEdge
     : drawDefaultEdge;
 }
