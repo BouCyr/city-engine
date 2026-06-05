@@ -874,7 +874,7 @@ export function buildStraightRiverPath(candidate) {
 
 function riverEntryStartPoint(candidate) {
   if (candidate.mouth?.riverCell) {
-    return H.cellCentroid(candidate.mouth.riverCell);
+    return candidate.mouth.riverExitPoint ?? H.cellCentroid(candidate.mouth.riverCell);
   }
   return null;
 }
@@ -1083,6 +1083,7 @@ function normalizeRiverMouth(mouth) {
     cell: mouth.cell ?? null,
     seaCell: mouth.seaCell ?? null,
     riverCell: mouth.riverCell ?? null,
+    riverExitPoint: mouth.riverExitPoint ? {...mouth.riverExitPoint} : null,
   };
 }
 

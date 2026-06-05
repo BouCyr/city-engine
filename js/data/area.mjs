@@ -32,6 +32,16 @@ export function drawArea(svg, groupElement = null) {
     path.setAttribute("filter", `url(#${filterId})`);
   }
   layer.appendChild(path);
+
+  if (this.tint) {
+    const tint = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    tint.setAttribute("d", pathData);
+    tint.setAttribute("class", "area area-tint");
+    tint.setAttribute("fill", this.tint);
+    tint.setAttribute("fill-opacity", String(this.tintOpacity ?? 0.2));
+    tint.setAttribute("fill-rule", "evenodd");
+    layer.appendChild(tint);
+  }
 }
 
 export function areaBoundaryPath(cells) {

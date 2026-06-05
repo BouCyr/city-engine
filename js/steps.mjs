@@ -5,6 +5,7 @@ import * as PRUNE  from "./steps/003-prune.mjs";
 import * as SEA_LAND from "./steps/004-sea-land.mjs";
 import * as RIVERS from "./steps/005.2-rivers.mjs";
 import * as TRIBUTARIES from "./steps/006-tributaries.mjs";
+import * as RIVER_TOPOLOGY from "./steps/007-river-topology.mjs";
 
 
 export const steps = [
@@ -102,6 +103,21 @@ export const steps = [
     explanation: (settings, stepResult) => [
       `Tributaries are stored after the main river in <em>map.rivers</em>. The step keeps the main river as the first entry and appends up to two tributaries.`,
       `Each bank is searched independently, starting with the larger bank. Tributary exits must have seaD at least eight, and banks with no valid route within the computation limit are skipped.`,
+    ],
+    renderExplanationExtras: null,
+  },
+  {
+    title:"River topology",
+    process:RIVER_TOPOLOGY.computeRiverTopology,
+    description: (settings, stepMap) => [
+      `This step turns the selected river and tributary paths into graph topology by splitting each traversed land cell along the river centerline.`,
+      `Normal river cells become two land cells separated by a <em>river</em> edge, while tributary merge cells are split around a three-way river junction.`,
+      `After the split, terrain areas are recomputed so rivers, sea, and the map boundary separate land areas.`,
+    ],
+    explanation: (settings, stepResult) => [
+      `River topology reads <em>map.rivers</em> from the previous steps and promotes those visual routes into real edges and cells.`,
+      `The step preserves graph identity by splitting existing cell boundary edges at river entry and exit points, then replacing each traversed cell with canonical child cells that reference canonical nodes and edges.`,
+      `Land areas are rebuilt as connected components separated by river edges, coast, sea, and map boundaries. Each land area keeps the existing land-area rendering path and receives a deterministic translucent tint.`,
     ],
     renderExplanationExtras: null,
   }

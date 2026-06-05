@@ -117,6 +117,7 @@ function cloneRiverMouth(mouth, cellMap) {
     cell: mouth.cell ? cellMap.get(mouth.cell) ?? null : null,
     seaCell: mouth.seaCell ? cellMap.get(mouth.seaCell) ?? null : null,
     riverCell: mouth.riverCell ? cellMap.get(mouth.riverCell) ?? null : null,
+    riverExitPoint: mouth.riverExitPoint ? cloneDeepKeepFunctions(mouth.riverExitPoint) : null,
   };
 }
 

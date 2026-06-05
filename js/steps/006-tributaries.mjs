@@ -71,6 +71,10 @@ export function computeTributaries(settings, map) {
         minLockedSeaDistance: tributarySettings.seaDThreshold,
       },
     });
+    meanderedTributary.mouth = {
+      ...meanderedTributary.mouth,
+      riverExitPoint: mainRiverExitPoint(mainRiver, meanderedTributary.mouth?.riverCell),
+    };
     const normalized = normalizeRiver(meanderedTributary, {
       type: "TRIBUTARY",
       id: `river-${rivers.length}`,
@@ -277,6 +281,21 @@ function compareExitsFromMouthDesc(a, b, mouth) {
   const aDistance = H.distance(H.cellCentroid(a), mouthCentroid);
   const bDistance = H.distance(H.cellCentroid(b), mouthCentroid);
   return bDistance - aDistance || compareCells(a, b);
+}
+
+function mainRiverExitPoint(mainRiver, mergeCell) {
+  const cells = mainRiver?.riverCells ?? [];
+  const index = cells.indexOf(mergeCell);
+  if (index < 0) return null;
+
+  const next = cells[index + 1];
+  if (next) {
+    const edge = H.cellsEdge(mergeCell, next);
+    return edge ? H.midpoint(edge.start, edge.end) : H.cellCentroid(next);
+  }
+
+  const exitEdge = mergeCell.edges.find(edge => edge.flags?.has("Boundary"));
+  return exitEdge ? H.midpoint(exitEdge.start, exitEdge.end) : H.cellCentroid(mergeCell);
 }
 
 function componentKey(component) {
