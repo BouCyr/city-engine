@@ -15,13 +15,13 @@
   padding-left: 0.7rem;
 }
 
-.container.settings-open .settings {
-  opacity: 1;
-  pointer-events: auto;
-}
-
 .setting-group {
   margin-bottom: 1rem;
+}
+
+.step-settings-form {
+  display: grid;
+  gap: 0.8rem;
 }
 
 .setting-group h3 {
@@ -31,12 +31,18 @@
 
 .setting-item {
   margin-bottom: 0.7rem;
-  margin-left: 1.4rem;
+}
+
+.setting-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.25rem;
 }
 
 .setting-item label {
   display: block;
-  margin-bottom: 0.25rem;
   font-size: 0.9rem;
 }
 
@@ -85,6 +91,30 @@
   margin: 0.2rem 0 0;
   font-size: 0.78rem;
   line-height: 1.25;
+}
+
+.setting-readonly-value {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 1.85rem;
+  border: 1px solid color-mix(in srgb, var(--mute) 65%, transparent);
+  border-radius: 8px;
+  padding: 0.28rem 0.45rem;
+  color: color-mix(in srgb, var(--text-color) 78%, transparent);
+  background: color-mix(in srgb, var(--mute) 7%, transparent);
+}
+
+.setting-source-badge {
+  flex: none;
+  border: 1px solid color-mix(in srgb, var(--mute) 65%, transparent);
+  border-radius: 999px;
+  padding: 0.08rem 0.42rem;
+  font-size: 0.68rem;
+  color: color-mix(in srgb, var(--text-color) 70%, transparent);
+}
+
+.step-settings-empty {
+  color: color-mix(in srgb, var(--text-color) 70%, transparent);
 }
 
 .setting-help .setting-reset {

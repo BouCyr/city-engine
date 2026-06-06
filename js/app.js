@@ -1,7 +1,7 @@
 import {steps} from "./steps.mjs";
 import {runPipeline} from "./pipeline.mjs";
 import {hydrateReplay, plainSettings, serializeMap} from "./replay-service.mjs";
-import {createDefaultSettings, initSettingsPanel} from "./ui/settings-panel.mjs";
+import {createDefaultSettings, renderStepSettingsForm} from "./ui/settings-panel.mjs";
 
 export let settings = createDefaultSettings();
 export let map;
@@ -10,7 +10,7 @@ export let stepResults = [];
 let svgDomElt;
 let selectedStepIndex = steps.length - 1;
 let hoveredStepIndex = null;
-let settingsPanel;
+let stepSettingsOpen = false;
 let pendingRegeneration = null;
 let replayFrameIndex = 0;
 let replayTimer = null;
@@ -19,7 +19,7 @@ let replayGenerationToken = 0;
 let nextReplayRequestId = 1;
 const pendingReplayRequests = new Map();
 
-const REPLAY_INTERVAL_MS = 500;
+const REPLAY_INTERVAL_MS = 2000;
 const ZOOM_IN_FACTOR = 0.9;
 const ZOOM_OUT_FACTOR = 1.1;
 const MIN_VIEW_RATIO = 0.12;
@@ -39,7 +39,7 @@ const panState = {
 };
 
 function activeStepIndex() {
-  if (isStepExplanationOpen()) {
+  if (isStepExplanationOpen() || stepSettingsOpen) {
     return selectedStepIndex;
   }
 
@@ -63,7 +63,7 @@ function renderCurrentMap() {
   renderStepExplanation();
 }
 
-function regenerate(nextSettings = settingsPanel?.readSettings?.() ?? settings) {
+function regenerate(nextSettings = settings) {
   const previousSize = settings.size;
   settings = nextSettings;
   replayGenerationToken += 1;
@@ -110,7 +110,7 @@ function initStepsUI() {
     listItem.append(firstLetter, rest);
 
     listItem.addEventListener("mouseenter", () => {
-      if (isStepExplanationOpen()) {
+      if (isStepExplanationOpen() || stepSettingsOpen) {
         return;
       }
 
@@ -147,7 +147,7 @@ function initStepsUI() {
   });
 
   list.addEventListener("mouseleave", () => {
-    if (isStepExplanationOpen()) {
+    if (isStepExplanationOpen() || stepSettingsOpen) {
       return;
     }
 
@@ -164,24 +164,6 @@ function updateSelectedStep() {
   });
 }
 
-function initSettingsToggle() {
-  const container = document.querySelector(".container");
-  const button = document.getElementById("settings-toggle");
-  const panel = document.getElementById("settings-panel");
-  if (!container || !button || !panel) {
-    return;
-  }
-
-  panel.inert = true;
-  button.setAttribute("aria-controls", "settings-panel");
-  button.setAttribute("aria-expanded", "false");
-
-  button.addEventListener("click", () => {
-    const open = !container.classList.contains("settings-open");
-    setSettingsOpen(open);
-  });
-}
-
 function renderStepDetails(step, result) {
   const details = document.getElementById("details");
   if (!details) {
@@ -189,35 +171,65 @@ function renderStepDetails(step, result) {
   }
 
   details.innerHTML = "";
-  details.appendChild(createStepExplanationToggle());
+  details.appendChild(createDetailsHeader(step));
 
-  const heading = document.createElement("h4");
-  heading.textContent = `${step.title} Step`;
-  details.appendChild(heading);
+  const body = document.createElement("div");
+  body.className = `details-body ${stepSettingsOpen ? "details-body-settings" : "details-body-overview"}`;
+  details.appendChild(body);
+
+  if (stepSettingsOpen) {
+    renderStepSettingsForm(body, settings, step.title, scheduleRegeneration);
+    return;
+  }
 
   if (step.description) {
     const paragraphs = step.description(settings, result?.map);
     paragraphs.forEach((paragraph) => {
       const p = document.createElement("p");
       p.innerHTML = paragraph;
-      details.appendChild(p);
+      body.appendChild(p);
     });
   }
 
   if (result?.metrics) {
-    details.appendChild(createMetricsDetails(result.metrics));
+    body.appendChild(createMetricsDetails(result.metrics));
   }
+}
+
+function createDetailsHeader(step) {
+  const header = document.createElement("div");
+  const title = document.createElement("h4");
+  const actions = document.createElement("div");
+
+  header.className = "details-header";
+  title.textContent = `${step.title} Step`;
+  actions.className = "details-actions";
+  actions.append(createStepExplanationToggle(), createStepSettingsToggle());
+  header.append(title, actions);
+  return header;
 }
 
 function createStepExplanationToggle() {
   const button = document.createElement("button");
   button.type = "button";
   button.id = "step-explanation-toggle";
-  button.className = "step-explanation-toggle";
+  button.className = "details-icon-button step-explanation-toggle";
   button.setAttribute("aria-controls", "step-explanation-panel");
   button.setAttribute("aria-expanded", String(isStepExplanationOpen()));
-  button.textContent = "Step explanation";
+  button.setAttribute("aria-label", "Step explanation");
+  button.innerHTML = infoIconSvg();
   button.addEventListener("click", () => setStepExplanationOpen(!isStepExplanationOpen()));
+  return button;
+}
+
+function createStepSettingsToggle() {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "details-icon-button step-settings-toggle";
+  button.setAttribute("aria-expanded", String(stepSettingsOpen));
+  button.setAttribute("aria-label", stepSettingsOpen ? "Close step settings" : "Open step settings");
+  button.innerHTML = stepSettingsOpen ? closeIconSvg() : settingsIconSvg();
+  button.addEventListener("click", () => setStepSettingsOpen(!stepSettingsOpen));
   return button;
 }
 
@@ -230,37 +242,8 @@ function initStepExplanationPanel() {
   panel.inert = true;
 }
 
-function setSettingsOpen(open) {
-  const container = document.querySelector(".container");
-  const button = document.getElementById("settings-toggle");
-  const panel = document.getElementById("settings-panel");
-  const details = document.getElementById("details");
-  const explanation = document.getElementById("step-explanation-panel");
-  if (!container || !button || !panel) {
-    return;
-  }
-
-  const closedExplanation = open && container.classList.contains("step-explanation-open");
-  if (open) {
-    stopReplayPlayback();
-    container.classList.remove("step-explanation-open");
-    explanation && (explanation.inert = true);
-  }
-
-  container.classList.toggle("settings-open", open);
-  panel.inert = !open;
-  details && (details.inert = open || container.classList.contains("step-explanation-open"));
-  button.setAttribute("aria-expanded", String(open));
-
-  if (closedExplanation) {
-    renderCurrentMap();
-  }
-}
-
 function setStepExplanationOpen(open) {
   const container = document.querySelector(".container");
-  const settingsButton = document.getElementById("settings-toggle");
-  const settingsPanelElement = document.getElementById("settings-panel");
   const details = document.getElementById("details");
   const explanation = document.getElementById("step-explanation-panel");
   if (!container || !explanation) {
@@ -272,15 +255,22 @@ function setStepExplanationOpen(open) {
   hoveredStepIndex = null;
 
   if (open) {
-    container.classList.remove("settings-open");
-    settingsPanelElement && (settingsPanelElement.inert = true);
-    settingsButton?.setAttribute("aria-expanded", "false");
+    stepSettingsOpen = false;
   }
 
   container.classList.toggle("step-explanation-open", open);
   explanation.inert = !open;
   details && (details.inert = open);
   requestReplayForSelectedStep();
+  renderCurrentMap();
+}
+
+function setStepSettingsOpen(open) {
+  stepSettingsOpen = open;
+  if (open) {
+    setStepExplanationOpen(false);
+    return;
+  }
   renderCurrentMap();
 }
 
@@ -364,6 +354,9 @@ function createReplayControls(frames) {
   const controls = document.createElement("div");
   const playButton = document.createElement("button");
   const label = document.createElement("span");
+  const sliderRow = document.createElement("div");
+  const previousButton = document.createElement("button");
+  const nextButton = document.createElement("button");
   const range = document.createElement("input");
 
   replayFrameIndex = Math.min(replayFrameIndex, frames.length - 1);
@@ -389,9 +382,34 @@ function createReplayControls(frames) {
     renderCurrentMap();
   });
 
+  previousButton.type = "button";
+  previousButton.className = "replay-step-button";
+  previousButton.setAttribute("aria-label", "Previous replay frame");
+  previousButton.innerHTML = chevronLeftSvg();
+  previousButton.disabled = replayFrameIndex <= 0;
+  previousButton.addEventListener("click", () => stepReplayFrame(-1));
+
+  nextButton.type = "button";
+  nextButton.className = "replay-step-button";
+  nextButton.setAttribute("aria-label", "Next replay frame");
+  nextButton.innerHTML = chevronRightSvg();
+  nextButton.disabled = replayFrameIndex >= frames.length - 1;
+  nextButton.addEventListener("click", () => stepReplayFrame(1));
+
+  sliderRow.className = "replay-slider-row";
+  sliderRow.append(previousButton, range, nextButton);
+
   controls.append(playButton, label);
-  wrapper.append(controls, range);
+  wrapper.append(controls, sliderRow);
   return wrapper;
+}
+
+function stepReplayFrame(direction) {
+  const frames = resultForStep(selectedStepIndex)?.replay?.frames;
+  if (!frames?.length) return;
+  stopReplayPlayback();
+  replayFrameIndex = Math.max(0, Math.min(frames.length - 1, replayFrameIndex + direction));
+  renderCurrentMap();
 }
 
 function toggleReplayPlayback() {
@@ -544,12 +562,30 @@ function createReplayStatus(result) {
 }
 
 svgDomElt = document.getElementById("map_svg");
-settingsPanel = initSettingsPanel(document.getElementById("settings-panel"), scheduleRegeneration);
 initStepsUI();
-initSettingsToggle();
 initStepExplanationPanel();
 initMapInteractions();
 regenerate(settings);
+
+function settingsIconSvg() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3M12 18v3M4.2 7.5l2.6 1.5M17.2 15l2.6 1.5M4.2 16.5l2.6-1.5M17.2 9l2.6-1.5"/><circle cx="12" cy="12" r="3.2"/><path d="M12 6a6 6 0 0 1 0 12 6 6 0 0 1 0-12Z"/></svg>`;
+}
+
+function closeIconSvg() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>`;
+}
+
+function infoIconSvg() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 11v5M12 8h.01"/></svg>`;
+}
+
+function chevronLeftSvg() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6 9 12l6 6"/></svg>`;
+}
+
+function chevronRightSvg() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>`;
+}
 
 function createMetricsDetails(metrics) {
   const wrapper = document.createElement("details");

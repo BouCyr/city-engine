@@ -6,14 +6,6 @@ export function createDefaultSettings() {
   return new Settings(defaultSettings.seed);
 }
 
-export function initSettingsPanel(panel, onChange) {
-  renderSettingsPanel(panel, createDefaultSettings(), onChange);
-
-  return {
-    readSettings: () => readSettingsFromForm(panel),
-  };
-}
-
 function getSettingValue(source, path) {
   return path.split(".").reduce((value, key) => value?.[key], source);
 }
@@ -47,6 +39,24 @@ function createElement(tagName, className) {
     element.className = className;
   }
   return element;
+}
+
+function cloneSettings(source) {
+  const clone = new Settings(source.seed);
+  SETTING_GROUPS.forEach((group) => {
+    group.settings.forEach((definition) => {
+      if (definition.path !== "seed") {
+        setSettingValue(clone, definition.path, cloneSettingValue(getSettingValue(source, definition.path)));
+      }
+    });
+  });
+  return clone;
+}
+
+function cloneSettingValue(value) {
+  if (Array.isArray(value)) return [...value];
+  if (value && typeof value === "object") return {...value};
+  return value;
 }
 
 function updateRangeValue(input) {
@@ -99,14 +109,24 @@ function createSettingControl(definition, value) {
   return input;
 }
 
-function createSettingHelp(definition) {
+function createReadOnlyValue(value) {
+  const output = createElement("div", "setting-readonly-value");
+  output.textContent = formatSettingValue(value);
+  return output;
+}
+
+function createSettingHelp(definition, editable = true) {
   const help = createElement("p", "setting-help");
+  if (!editable) {
+    help.textContent = definition.help;
+    return help;
+  }
+
   const reset = document.createElement("button");
   reset.type = "button";
   reset.className = "setting-reset";
   reset.dataset.resetPath = definition.path;
   reset.textContent = formatSettingValue(getSettingValue(defaultSettings, definition.path));
-
   help.append(
     document.createTextNode(`${definition.help} (`),
     reset,
@@ -116,48 +136,56 @@ function createSettingHelp(definition) {
   return help;
 }
 
-function renderSettingsPanel(panel, initialSettings, onChange) {
-  if (!panel) {
+export function renderStepSettingsForm(panel, initialSettings, stepTitle, onChange) {
+  const form = document.createElement("form");
+  const definitions = settingsForStep(stepTitle);
+  panel.__settingsSource = initialSettings;
+  form.className = "step-settings-form";
+
+  if (definitions.length === 0) {
+    const empty = createElement("p", "step-settings-empty");
+    empty.textContent = "This step has no settings.";
+    panel.appendChild(empty);
     return;
   }
 
-  panel.innerHTML = "";
-  const title = createElement("h2", "settings-title");
-  title.textContent = "Settings";
-  panel.appendChild(title);
+  definitions.forEach(({definition, editable, sourceStep}) => {
+    const item = createElement("div", `setting-item${editable ? "" : " setting-item-readonly"}`);
+    const label = document.createElement("label");
+    const labelRow = createElement("div", "setting-label-row");
+    const value = getSettingValue(initialSettings, definition.path);
+    const control = editable ? createSettingControl(definition, value) : createReadOnlyValue(value);
 
-  const form = document.createElement("form");
-  form.id = "settings-form";
+    label.textContent = definition.label;
+    if (definition.type !== "checkbox-list" && control.id) {
+      label.htmlFor = control.id;
+    }
 
-  SETTING_GROUPS.forEach((group) => {
-    const section = createElement("section", "setting-group");
-    const heading = document.createElement("h3");
-    heading.textContent = group.title;
-    section.appendChild(heading);
+    labelRow.appendChild(label);
+    if (!editable) {
+      const badge = createElement("span", "setting-source-badge");
+      badge.textContent = `Set in ${sourceStep}`;
+      labelRow.appendChild(badge);
+    }
 
-    group.settings.forEach((definition) => {
-      const item = createElement("div", "setting-item");
-      const label = document.createElement("label");
-      label.textContent = definition.label;
-
-      const value = getSettingValue(initialSettings, definition.path);
-      const control = createSettingControl(definition, value);
-
-      if (definition.type !== "checkbox-list" && control.id) {
-        label.htmlFor = control.id;
-      }
-
-      item.append(label, control, createSettingHelp(definition));
-      section.appendChild(item);
-    });
-
-    form.appendChild(section);
+    item.append(labelRow, control, createSettingHelp(definition, editable));
+    form.appendChild(item);
   });
 
   form.addEventListener("input", (event) => handleSettingsInput(panel, event, onChange));
   form.addEventListener("change", (event) => handleSettingsInput(panel, event, onChange));
   form.addEventListener("click", (event) => handleSettingsReset(panel, event, onChange));
   panel.appendChild(form);
+}
+
+export function settingsForStep(stepTitle) {
+  return SETTING_GROUPS.flatMap((group) => group.settings)
+    .filter((definition) => definition.ownerStep === stepTitle || (definition.usedBySteps ?? []).includes(stepTitle))
+    .map((definition) => ({
+      definition,
+      editable: definition.ownerStep === stepTitle,
+      sourceStep: definition.ownerStep,
+    }));
 }
 
 function getDefinition(path) {
@@ -265,7 +293,12 @@ function handleSettingsInput(panel, event, onChange) {
     updateRangeValue(control);
   }
 
-  onChange(readSettingsFromForm(panel));
+  const definition = getDefinition(control.dataset.settingPath);
+  if (!definition) return;
+
+  const nextSettings = cloneSettings(panel.__settingsSource ?? defaultSettings);
+  setSettingValue(nextSettings, definition.path, readSettingFromControls(panel, definition));
+  onChange(nextSettings);
 }
 
 function handleSettingsReset(panel, event, onChange) {
@@ -276,5 +309,10 @@ function handleSettingsReset(panel, event, onChange) {
 
   const path = button.dataset.resetPath;
   writeSettingToControls(panel, path, getSettingValue(defaultSettings, path));
-  onChange(readSettingsFromForm(panel));
+  const definition = getDefinition(path);
+  if (!definition) return;
+
+  const nextSettings = cloneSettings(panel.__settingsSource ?? defaultSettings);
+  setSettingValue(nextSettings, path, getSettingValue(defaultSettings, path));
+  onChange(nextSettings);
 }

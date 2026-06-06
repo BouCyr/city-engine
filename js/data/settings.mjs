@@ -56,6 +56,8 @@ export const SETTING_GROUPS = [
       {
         path: "seed",
         label: "Seed",
+        ownerStep: "Initialization",
+        usedBySteps: ["Scatter", "Gather", "Lloyd", "Prune", "Coast", "Rivers", "Tributaries", "River topology", "Smooth rivers"],
         type: "text",
         pattern: "[A-Za-z0-9_-]*",
         help: "Controls the deterministic random streams used by every generation step.",
@@ -63,6 +65,8 @@ export const SETTING_GROUPS = [
       {
         path: "size",
         label: "Map size",
+        ownerStep: "Initialization",
+        usedBySteps: ["Scatter", "Gather", "Lloyd", "Prune", "Coast", "Rivers", "Tributaries", "River topology", "Smooth rivers"],
         type: "number",
         min: 1,
         step: 25,
@@ -76,6 +80,7 @@ export const SETTING_GROUPS = [
       {
         path: "scatter.nb",
         label: "Point count",
+        ownerStep: "Scatter",
         type: "number",
         min: 1,
         step: 50,
@@ -84,6 +89,7 @@ export const SETTING_GROUPS = [
       {
         path: "scatter.safeZone",
         label: "Safe zone",
+        ownerStep: "Scatter",
         type: "number",
         min: 0,
         step: 10,
@@ -97,6 +103,7 @@ export const SETTING_GROUPS = [
       {
         path: "prune.threshold",
         label: "Short edge threshold",
+        ownerStep: "Prune",
         type: "number",
         min: 0,
         step: 5,
@@ -110,6 +117,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.seaBorders",
         label: "Sea borders",
+        ownerStep: "Coast",
         type: "checkbox-list",
         options: ["NORTH", "SOUTH", "EAST", "WEST"],
         help: "Chooses which map borders are treated as open sea.",
@@ -117,6 +125,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.seaPercent",
         label: "Sea percentage",
+        ownerStep: "Coast",
         type: "range",
         min: 0,
         max: 1,
@@ -126,6 +135,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.distanceWeight",
         label: "Distance weight",
+        ownerStep: "Coast",
         type: "range",
         min: 0,
         max: 3,
@@ -135,6 +145,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.edgeBias",
         label: "Sea edge bias",
+        ownerStep: "Coast",
         type: "range",
         min: 0,
         max: 1,
@@ -144,6 +155,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.edgeBiasReach",
         label: "Sea edge reach",
+        ownerStep: "Coast",
         type: "range",
         min: 0.01,
         max: 1,
@@ -153,6 +165,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.cornerBias",
         label: "Sea corner bias",
+        ownerStep: "Coast",
         type: "range",
         min: 0,
         max: 1,
@@ -162,6 +175,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.cornerBiasReach",
         label: "Sea corner reach",
+        ownerStep: "Coast",
         type: "range",
         min: 0.01,
         max: 1,
@@ -171,6 +185,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.largeScale",
         label: "Large noise scale",
+        ownerStep: "Coast",
         type: "number",
         min: 1,
         step: 1,
@@ -179,6 +194,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.mediumScale",
         label: "Medium noise scale",
+        ownerStep: "Coast",
         type: "number",
         min: 1,
         step: 1,
@@ -187,6 +203,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.smallScale",
         label: "Small noise scale",
+        ownerStep: "Coast",
         type: "number",
         min: 1,
         step: 1,
@@ -195,6 +212,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.largeAmplitude",
         label: "Large noise amplitude",
+        ownerStep: "Coast",
         type: "range",
         min: 0,
         max: 1,
@@ -204,6 +222,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.mediumAmplitude",
         label: "Medium noise amplitude",
+        ownerStep: "Coast",
         type: "range",
         min: 0,
         max: 1,
@@ -213,6 +232,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.smallAmplitude",
         label: "Small noise amplitude",
+        ownerStep: "Coast",
         type: "range",
         min: 0,
         max: 1,
@@ -222,6 +242,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.smoothingPasses",
         label: "Smoothing passes",
+        ownerStep: "Coast",
         type: "number",
         min: 0,
         step: 1,
@@ -230,6 +251,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.smoothingBias",
         label: "Smoothing bias",
+        ownerStep: "Coast",
         type: "range",
         min: 0,
         max: 1,
@@ -239,6 +261,7 @@ export const SETTING_GROUPS = [
       {
         path: "coast.artifactsMax",
         label: "Artifact limit",
+        ownerStep: "Coast",
         type: "number",
         min: 1,
         step: 1,
@@ -252,6 +275,7 @@ export const SETTING_GROUPS = [
       {
         path: "rivers.minEdgeSize",
         label: "Min edge size",
+        ownerStep: "Rivers",
         type: "number",
         min: 1,
         step: 1,
@@ -260,6 +284,8 @@ export const SETTING_GROUPS = [
       {
         path: "rivers.maxComputeMs",
         label: "Max compute ms",
+        ownerStep: "Rivers",
+        usedBySteps: ["Tributaries"],
         type: "number",
         min: 1,
         step: 50,
@@ -268,6 +294,7 @@ export const SETTING_GROUPS = [
       {
         path: "rivers.minExitOpenSeaDistance",
         label: "Min exit seaD",
+        ownerStep: "Rivers",
         type: "number",
         min: 1,
         step: 1,
@@ -276,6 +303,7 @@ export const SETTING_GROUPS = [
       {
         path: "rivers.initialSeaDIncreaseSteps",
         label: "Initial seaD rise",
+        ownerStep: "Rivers",
         type: "number",
         min: 0,
         step: 1,
@@ -284,6 +312,7 @@ export const SETTING_GROUPS = [
       {
         path: "rivers.minLockedSeaDistance",
         label: "Locked seaD",
+        ownerStep: "Rivers",
         type: "number",
         min: 1,
         step: 1,
@@ -292,12 +321,16 @@ export const SETTING_GROUPS = [
       {
         path: "rivers.meanderForbiddenRadii",
         label: "Meander radii",
+        ownerStep: "Rivers",
+        usedBySteps: ["Tributaries"],
         type: "text",
         help: "Comma-separated graph-distance radii tried in order when searching river meanders.",
       },
       {
         path: "rivers.meanderMaxPathFactor",
         label: "Meander max factor",
+        ownerStep: "Rivers",
+        usedBySteps: ["Tributaries"],
         type: "number",
         min: 1,
         step: 0.5,
@@ -311,6 +344,7 @@ export const SETTING_GROUPS = [
       {
         path: "tributaries.maxComputeMs",
         label: "Max compute ms",
+        ownerStep: "Tributaries",
         type: "number",
         min: 1,
         step: 50,
@@ -319,6 +353,7 @@ export const SETTING_GROUPS = [
       {
         path: "tributaries.mouthSeaDistance",
         label: "Mouth seaD",
+        ownerStep: "Tributaries",
         type: "number",
         min: 1,
         step: 1,
@@ -327,6 +362,7 @@ export const SETTING_GROUPS = [
       {
         path: "tributaries.seaDThreshold",
         label: "Exit seaD",
+        ownerStep: "Tributaries",
         type: "number",
         min: 1,
         step: 1,
@@ -335,6 +371,7 @@ export const SETTING_GROUPS = [
       {
         path: "tributaries.secondMouthMinDistance",
         label: "Second mouth gap",
+        ownerStep: "Tributaries",
         type: "number",
         min: 0,
         step: 1,

@@ -11,6 +11,18 @@ import * as SMOOTH_RIVERS from "./steps/008-smooth-rivers.mjs";
 
 export const steps = [
 
+  {
+    title: "Initialization",
+    process: (settings, map) => map,
+    description: (settings) => [
+      `This initial step stores global generation settings before any map geometry is created.`,
+      `The seed <em>${settings.seed}</em> drives deterministic per-step random streams, and the map size is <em>${settings.size}</em> SVG units.`,
+    ],
+    explanation: (settings) => [
+      `Initialization does not modify the map. It exists so global settings have a dedicated place in the step workflow.`,
+      `Later steps read these global settings as read-only context where needed.`,
+    ],
+  },
   {title:"Scatter",
     process: SCATTER.scatterPoints,
     createReplay: SCATTER.createReplay,

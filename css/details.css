@@ -1,6 +1,6 @@
 .details,
 .step-explanation {
-  grid-area: 2 / 4 / 3 / 5;
+  grid-area: 2 / 3 / 3 / 4;
   max-width: var(--details-column-width);
   width: var(--details-column-width);
   min-width: 0;
@@ -12,7 +12,7 @@
 }
 
 .step-explanation {
-  grid-area: 2 / 5 / 3 / 6;
+  grid-area: 2 / 4 / 3 / 5;
   max-width: var(--explanation-column-width);
   width: var(--explanation-column-width);
   border-left: 1px solid var(--mute);
@@ -23,7 +23,6 @@
   transition: max-width 0.2s ease, width 0.2s ease, opacity 0.2s ease;
 }
 
-.container.settings-open .details,
 .container.step-explanation-open .details {
   max-width: 0;
   width: 0;
@@ -51,7 +50,7 @@
   letter-spacing: 0;
 }
 
-.step-explanation-toggle,
+.details-icon-button,
 .step-explanation-close,
 .replay-play-toggle {
   font: inherit;
@@ -63,30 +62,78 @@
   cursor: pointer;
 }
 
-.step-explanation-toggle {
-  margin-bottom: 0.9rem;
-}
-
-.step-explanation-toggle:hover,
+.details-icon-button:hover,
 .step-explanation-close:hover,
-.replay-play-toggle:hover {
+.replay-play-toggle:hover,
+.replay-step-button:hover {
   border-color: var(--accent-color);
 }
 
-.step-explanation-toggle:focus-visible,
+.details-icon-button:focus-visible,
 .step-explanation-close:focus-visible,
 .replay-play-toggle:focus-visible,
+.replay-step-button:focus-visible,
 .replay-controls input[type="range"]:focus-visible {
   outline: 1px solid var(--accent-color);
   outline-offset: 2px;
 }
 
+.details-header,
 .step-explanation-header,
 .replay-control-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+}
+
+.details-header {
+  margin-bottom: 0.85rem;
+}
+
+.details-header h4 {
+  margin: 0;
+}
+
+.details-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.details-icon-button,
+.replay-step-button {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+}
+
+.details-icon-button svg,
+.replay-step-button svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.details-body {
+  animation: details-panel-swap 0.18s ease both;
+}
+
+@keyframes details-panel-swap {
+  from {
+    opacity: 0;
+    transform: translateY(0.25rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .step-explanation-header {
@@ -111,8 +158,29 @@
 
 .replay-controls input[type="range"] {
   width: 100%;
-  margin-top: 0.65rem;
   cursor: pointer;
+}
+
+.replay-slider-row {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) 2rem;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.65rem;
+}
+
+.replay-step-button {
+  font: inherit;
+  color: var(--text-color);
+  background: transparent;
+  border: 1px solid var(--mute);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.replay-step-button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .replay-frame-text {

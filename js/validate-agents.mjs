@@ -5,7 +5,7 @@ import {Edge} from "./data/edge.mjs";
 import * as H from "./data/helper.mjs";
 import {Map} from "./data/map.mjs";
 import {Node, Poi} from "./data/nodes.mjs";
-import {Settings} from "./data/settings.mjs";
+import {SETTING_GROUPS, Settings} from "./data/settings.mjs";
 import {runPipeline} from "./pipeline.mjs";
 import {
   buildReplayPayload,
@@ -16,6 +16,7 @@ import {
   serializeReplay,
 } from "./replay-service.mjs";
 import {steps} from "./steps.mjs";
+import {settingsForStep} from "./ui/settings-panel.mjs";
 import {createReplay as createScatterReplay, scatterPoints} from "./steps/000-scatter.mjs";
 import {cells, createReplay as createGatherReplay} from "./steps/001-gather.mjs";
 import {relax} from "./steps/002-lloyd.mjs";
@@ -216,6 +217,49 @@ function validateStepRngDeterminism() {
 
   settings.createStepRng("Inserted").next();
   assert.equal(settings.createStepRng("Scatter").next(), firstScatter);
+}
+
+function validateInitializationStepRegisteredFirst() {
+  const settings = new Settings("init-step");
+  const map = new Map(settings);
+
+  assert.equal(steps[0]?.title, "Initialization");
+  assert.equal(steps[0]?.process(settings, map), map);
+}
+
+function validateSettingsAreLinkedToRegisteredSteps() {
+  const stepTitles = new Set(steps.map(step => step.title));
+  const definitions = SETTING_GROUPS.flatMap(group => group.settings);
+
+  assert.ok(definitions.length > 0);
+  for (const definition of definitions) {
+    assert.ok(definition.ownerStep, `${definition.path} has no ownerStep`);
+    assert.ok(stepTitles.has(definition.ownerStep), `${definition.path} ownerStep is not registered`);
+    for (const usedByStep of definition.usedBySteps ?? []) {
+      assert.ok(stepTitles.has(usedByStep), `${definition.path} usedByStep ${usedByStep} is not registered`);
+    }
+  }
+}
+
+function validateStepSettingsOwnershipAndReadOnlySharing() {
+  const initializationSettings = settingsForStep("Initialization");
+  const tributarySettings = settingsForStep("Tributaries");
+  const seed = initializationSettings.find(({definition}) => definition.path === "seed");
+  const riverMaxCompute = tributarySettings.find(({definition}) => definition.path === "rivers.maxComputeMs");
+  const tributaryMaxCompute = tributarySettings.find(({definition}) => definition.path === "tributaries.maxComputeMs");
+
+  assert.equal(seed?.editable, true);
+  assert.equal(seed?.sourceStep, "Initialization");
+  assert.equal(riverMaxCompute?.editable, false);
+  assert.equal(riverMaxCompute?.sourceStep, "Rivers");
+  assert.equal(tributaryMaxCompute?.editable, true);
+  assert.equal(tributaryMaxCompute?.sourceStep, "Tributaries");
+
+  for (const step of steps) {
+    for (const entry of settingsForStep(step.title)) {
+      assert.equal(entry.editable, entry.definition.ownerStep === step.title);
+    }
+  }
 }
 
 function validateGatherVoronoi() {
@@ -2198,6 +2242,9 @@ validatePipelineClonesBeforeSteps();
 validatePipelineSkipsReplayHotpath();
 validateScatterReplay();
 validateStepRngDeterminism();
+validateInitializationStepRegisteredFirst();
+validateSettingsAreLinkedToRegisteredSteps();
+validateStepSettingsOwnershipAndReadOnlySharing();
 validateGatherVoronoi();
 validateGatherReplay();
 validateMapClearClearsOverlay();

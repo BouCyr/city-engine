@@ -10,23 +10,6 @@
   margin-bottom: 0.5rem;
 }
 
-#settings-toggle {
-  appearance: none;
-  border: 0;
-  color: var(--accent-color);
-  background: transparent;
-  padding: 0;
-  font: inherit;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 0.16em;
-}
-
-#settings-toggle:focus-visible {
-  outline: 1px solid var(--accent-color);
-  outline-offset: 2px;
-}
-
 li::marker {
   font-weight: 600;
   color: var(--text-color);
