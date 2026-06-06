@@ -7,6 +7,7 @@ import * as RIVERS from "./steps/005.2-rivers.mjs";
 import * as TRIBUTARIES from "./steps/006-tributaries.mjs";
 import * as RIVER_TOPOLOGY from "./steps/007-river-topology.mjs";
 import * as SMOOTH_RIVERS from "./steps/008-smooth-rivers.mjs";
+import * as SMOOTH_COAST from "./steps/009-smooth-coast.mjs";
 
 
 export const steps = [
@@ -147,6 +148,21 @@ export const steps = [
       `Smooth rivers works on the real river edges created by River topology, not on the earlier visual overlay.`,
       `Each fixed anchor is stored as a node flag, and each replacement edge keeps the same river metadata so river ownership remains inspectable after smoothing.`,
       `Mouth and exit tails that do not lie between two fixed anchors stay as straight sampled sections.`,
+    ],
+    renderExplanationExtras: null,
+  },
+  {
+    title:"Smooth coast",
+    process:SMOOTH_COAST.smoothCoast,
+    createReplay: SMOOTH_COAST.createReplay,
+    description: (settings, stepMap) => [
+      `This step opens tiny sea gaps where land cells touch only at a singular point, then smooths the coast with the same fixed-anchor and Bezier sampling workflow used for rivers.`,
+      `Singular land contacts are separated by <em>1</em> SVG unit so non-neighboring land areas no longer share a canonical corner node.`,
+      `Coast edges are sampled into regular sub-edges, then intermediate nodes are moved onto quadratic Bezier curves between fixed anchors.`,
+    ],
+    explanation: (settings, stepResult) => [
+      `Smooth coast first detects land cells that meet at a point without sharing an edge. Each disconnected land component receives its own replacement corner node, and short coast gap edges mark the sea space between them.`,
+      `After that correction, the step splits coast edges at fixed midpoint anchors, samples sections near <em>${SMOOTH_COAST.TARGET_COAST_SEGMENT_LENGTH}</em> units, and moves non-fixed sample nodes onto target Bezier curves.`,
     ],
     renderExplanationExtras: null,
   }

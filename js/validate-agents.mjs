@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {cloneDeepKeepFunctions} from "./data/clone.mjs";
-import {Cell} from "./data/cell.mjs";
+import {Cell, orderedCellPoints} from "./data/cell.mjs";
 import {Edge} from "./data/edge.mjs";
 import * as H from "./data/helper.mjs";
 import {Map} from "./data/map.mjs";
@@ -37,6 +37,7 @@ import {
 import {computeTributaries, mouthThirdScore, selectTributary} from "./steps/006-tributaries.mjs";
 import {computeRiverTopology} from "./steps/007-river-topology.mjs";
 import {createReplay as createSmoothRiversReplay, FIXED_FLAG, smoothRivers, TARGET_RIVER_SEGMENT_LENGTH} from "./steps/008-smooth-rivers.mjs";
+import {COAST_GAP_FLAG, createReplay as createSmoothCoastReplay, smoothCoast} from "./steps/009-smooth-coast.mjs";
 
 function createSvgProbe() {
   const calls = [];
@@ -1763,6 +1764,178 @@ function createLongSmoothRiverFixture() {
   return {settings, map};
 }
 
+function validateSmoothCoastRegisteredInPipeline() {
+  const riverIndex = steps.findIndex(step => step.title === "Smooth rivers");
+  const coastIndex = steps.findIndex(step => step.title === "Smooth coast");
+
+  assert.ok(riverIndex >= 0);
+  assert.equal(coastIndex, riverIndex + 1);
+  assert.equal(steps[coastIndex]?.process, smoothCoast);
+  assert.equal(steps[coastIndex]?.createReplay, createSmoothCoastReplay);
+}
+
+function validateSmoothCoastSeparatesDiagonalLandContact() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 2,
+    height: 2,
+    sea: [[1, 0], [0, 1]],
+    seed: "smooth-coast-diagonal",
+  });
+
+  const result = smoothCoast(settings, map);
+  const landCells = result.cells.filter(cell => cell.type === TERRAIN_LAND);
+  const sharedLandNodes = result.nodes.filter(node => landCells.filter(cell => cellUsesNode(cell, node)).length > 1);
+  const gapEdges = result.edges.filter(edge => edge.flags?.has(COAST_GAP_FLAG));
+
+  assert.equal(sharedLandNodes.length, 0);
+  assert.ok(gapEdges.length >= 1);
+  assertGraphIdentity(result);
+}
+
+function validateSmoothCoastKeepsNeighboringLandComponentTogether() {
+  const {settings, map, center, cells} = createSingularCoastFixture("mixed");
+  const result = smoothCoast(settings, map);
+  const neighborA = cells[0];
+  const neighborB = cells[1];
+  const isolated = cells[2];
+  const neighborSharedNodes = orderedCellPoints(neighborA).filter(node => orderedCellPoints(neighborB).includes(node));
+  const isolatedSharedWithNeighbors = orderedCellPoints(isolated).filter(node => (
+    orderedCellPoints(neighborA).includes(node) || orderedCellPoints(neighborB).includes(node)
+  ));
+
+  assert.equal(orderedCellPoints(neighborA).includes(center), false);
+  assert.equal(orderedCellPoints(neighborB).includes(center), false);
+  assert.equal(orderedCellPoints(isolated).includes(center), false);
+  assert.ok(neighborSharedNodes.length > 0);
+  assert.equal(isolatedSharedWithNeighbors.length, 0);
+  assertGraphIdentity(result);
+}
+
+function validateSmoothCoastSeparatesThreeNonNeighborLandCells() {
+  const {settings, map, cells} = createSingularCoastFixture("separate");
+  const result = smoothCoast(settings, map);
+
+  for (let index = 0; index < cells.length; index += 1) {
+    for (let otherIndex = index + 1; otherIndex < cells.length; otherIndex += 1) {
+      assert.equal(
+        orderedCellPoints(cells[index]).some(node => orderedCellPoints(cells[otherIndex]).includes(node)),
+        false
+      );
+    }
+  }
+  assert.ok(result.edges.filter(edge => edge.flags?.has(COAST_GAP_FLAG)).length >= 3);
+  assertGraphIdentity(result);
+}
+
+function validateSmoothCoastReplayFrames() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 2,
+    height: 2,
+    sea: [[1, 0], [0, 1]],
+    seed: "smooth-coast-replay",
+  });
+  const replay = createSmoothCoastReplay(settings, map);
+
+  assert.deepEqual(replay.frames.map(frame => frame.label), [
+    "Singular coast nodes",
+    "Sea gap edges",
+    "Edge bisection",
+    "Fixed points",
+    "Edge sampling",
+    "Target Bezier",
+    "Node movement",
+    "Smoothed coast",
+  ]);
+  assert.ok(replay.frames[0].overlay.points.some(point => point.fill === "#ef4444"));
+  assert.ok(replay.frames[1].overlay.lines.some(line => line.stroke === "#ef4444"));
+  assert.ok(replay.frames[4].overlay.points.some(point => point.fill === "#8b5cf6"));
+  assert.ok(replay.frames[5].overlay.paths.some(path => path.stroke === "#8b5cf6" && path.d.includes(" Q ")));
+  assert.ok(replay.frames[6].overlay.lines.some(line => line.stroke === "#8b5cf6"));
+  assert.ok(replay.frames[7].overlay.paths.some(path => path.stroke === "var(--coast-edge)"));
+
+  const expected = smoothCoast(settings, cloneDeepKeepFunctions(map));
+  assert.deepEqual(
+    replay.frames.at(-1).map.edges.map(edge => [edge.id, edge.start.id, edge.end.id, edge.type, edge.flags?.has(COAST_GAP_FLAG) ?? false]),
+    expected.edges.map(edge => [edge.id, edge.start.id, edge.end.id, edge.type, edge.flags?.has(COAST_GAP_FLAG) ?? false])
+  );
+}
+
+function validateSmoothCoastReplayHydrationDrawsOverlay() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 2,
+    height: 2,
+    sea: [[1, 0], [0, 1]],
+    seed: "smooth-coast-hydrate",
+  });
+  const replay = hydrateReplay(serializeReplay(createSmoothCoastReplay(settings, map)));
+  const {calls, svg} = createSvgProbe();
+
+  replay.frames[5].map.drawOverlay(svg);
+
+  assert.ok(calls.some(call => call.name === "circle" && call.attrs.fill === "#8b5cf6"));
+  assert.ok(calls.some(call => call.name === "path" && String(call.attrs.d).includes(" Q ")));
+  assert.ok(calls.every(call => call.layerId === "overlay"));
+}
+
+function createSingularCoastFixture(kind) {
+  const settings = new Settings(`smooth-coast-${kind}`);
+  const map = new Map(settings);
+  const center = Node("center", 0, 0, "fixture");
+  map.nodes.push(center);
+  const cells = [];
+  const edgeByKey = new globalThis.Map();
+
+  function node(id, x, y) {
+    const created = Node(id, x, y, "fixture");
+    map.nodes.push(created);
+    return created;
+  }
+
+  function edgeBetween(a, b) {
+    const key = [a.id, b.id].sort().join("|");
+    if (!edgeByKey.has(key)) {
+      const edge = Edge(`fixture-edge-${edgeByKey.size}`, a, b, "fixture", null, [TERRAIN_COAST]);
+      edgeByKey.set(key, edge);
+      map.edges.push(edge);
+    }
+    return edgeByKey.get(key);
+  }
+
+  function addCell(id, points) {
+    const edges = [];
+    for (let index = 0; index < points.length; index += 1) {
+      edges.push(edgeBetween(points[index], points[(index + 1) % points.length]));
+    }
+    const cell = Cell(id, edges);
+    cell.type = TERRAIN_LAND;
+    cell.flags.add(TERRAIN_LAND);
+    cells.push(cell);
+    map.cells.push(cell);
+    for (const edge of edges) {
+      if (!edge.leftCell) edge.leftCell = cell;
+      else if (!edge.rightCell) edge.rightCell = cell;
+    }
+    return cell;
+  }
+
+  if (kind === "mixed") {
+    const top = node("top", 0, -100);
+    addCell("neighbor-a", [center, top, node("left", -100, -40)]);
+    addCell("neighbor-b", [center, node("right", 100, -40), top]);
+    addCell("isolated", [center, node("bottom-right", 80, 90), node("bottom-left", -80, 90)]);
+  } else {
+    addCell("separate-a", [center, node("a1", 90, 10), node("a2", 50, 80)]);
+    addCell("separate-b", [center, node("b1", -55, 75), node("b2", -95, 5)]);
+    addCell("separate-c", [center, node("c1", -25, -95), node("c2", 70, -70)]);
+  }
+
+  return {settings, map, center, cells};
+}
+
+function cellUsesNode(cell, node) {
+  return orderedCellPoints(cell).includes(node);
+}
+
 function assertRiverTopologyGraphIdentity(map) {
   for (const edge of map.edges) {
     assert.ok(map.nodes.includes(edge.start), `edge ${edge.id} start is detached`);
@@ -2295,6 +2468,12 @@ validateSmoothRiversKeepsMergeNodesFixedWithoutMidpointSplit();
 validateSmoothRiversMovesInteriorNodesOnBezier();
 validateSmoothRiversReplayFrames();
 validateSmoothRiversReplayHydrationDrawsOverlayPoints();
+validateSmoothCoastRegisteredInPipeline();
+validateSmoothCoastSeparatesDiagonalLandContact();
+validateSmoothCoastKeepsNeighboringLandComponentTogether();
+validateSmoothCoastSeparatesThreeNonNeighborLandCells();
+validateSmoothCoastReplayFrames();
+validateSmoothCoastReplayHydrationDrawsOverlay();
 validateAStarRiverDrawsStraightPath();
 validateTributaryDrawStartsFromPrimaryRiverExitPoint();
 validateAStarRiversReplayFrames();
