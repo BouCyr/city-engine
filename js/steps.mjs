@@ -6,6 +6,7 @@ import * as SEA_LAND from "./steps/004-sea-land.mjs";
 import * as RIVERS from "./steps/005.2-rivers.mjs";
 import * as TRIBUTARIES from "./steps/006-tributaries.mjs";
 import * as RIVER_TOPOLOGY from "./steps/007-river-topology.mjs";
+import * as SMOOTH_RIVERS from "./steps/008-smooth-rivers.mjs";
 
 
 export const steps = [
@@ -118,6 +119,22 @@ export const steps = [
       `River topology reads <em>map.rivers</em> from the previous steps and promotes those visual routes into real edges and cells.`,
       `The step preserves graph identity by splitting existing cell boundary edges at river entry and exit points, then replacing each traversed cell with canonical child cells that reference canonical nodes and edges.`,
       `Land areas are rebuilt as connected components separated by river edges, coast, sea, and map boundaries. Each land area keeps the existing land-area rendering path and receives a deterministic translucent tint.`,
+    ],
+    renderExplanationExtras: null,
+  },
+  {
+    title:"Smooth rivers",
+    process:SMOOTH_RIVERS.smoothRivers,
+    createReplay: SMOOTH_RIVERS.createReplay,
+    description: (settings, stepMap) => [
+      `This step samples river topology edges into regular sub-edges with a target segment length of <em>${SMOOTH_RIVERS.TARGET_RIVER_SEGMENT_LENGTH}</em> map units.`,
+      `Normal river sections receive a fixed midpoint anchor, while merge junctions are kept fixed and only their incoming sections are subdivided.`,
+      `Intermediate river nodes between fixed anchors are moved onto quadratic Bezier curves so rivers become smoother while preserving canonical graph references.`,
+    ],
+    explanation: (settings, stepResult) => [
+      `Smooth rivers works on the real river edges created by River topology, not on the earlier visual overlay.`,
+      `Each fixed anchor is stored as a node flag, and each replacement edge keeps the same river metadata so river ownership remains inspectable after smoothing.`,
+      `Mouth and exit tails that do not lie between two fixed anchors stay as straight sampled sections.`,
     ],
     renderExplanationExtras: null,
   }

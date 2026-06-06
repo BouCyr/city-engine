@@ -35,6 +35,7 @@ import {
 } from "./steps/005.2-rivers.mjs";
 import {computeTributaries, mouthThirdScore, selectTributary} from "./steps/006-tributaries.mjs";
 import {computeRiverTopology} from "./steps/007-river-topology.mjs";
+import {createReplay as createSmoothRiversReplay, FIXED_FLAG, smoothRivers, TARGET_RIVER_SEGMENT_LENGTH} from "./steps/008-smooth-rivers.mjs";
 
 function createSvgProbe() {
   const calls = [];
@@ -1527,6 +1528,197 @@ function validateRiverTopologyAreaTintDrawsOverlay() {
   assert.ok(calls.some(call => call.attrs["fill-opacity"] === "0.2"));
 }
 
+function validateSmoothRiversRegisteredInPipeline() {
+  const topologyIndex = steps.findIndex(step => step.title === "River topology");
+  const smoothIndex = steps.findIndex(step => step.title === "Smooth rivers");
+  assert.ok(topologyIndex >= 0);
+  assert.equal(smoothIndex, topologyIndex + 1);
+  assert.equal(steps[smoothIndex]?.process, smoothRivers);
+  assert.equal(steps[smoothIndex]?.createReplay, createSmoothRiversReplay);
+}
+
+function validateSmoothRiversSplitsAndSamplesRiverEdges() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 3,
+    height: 3,
+    sea: [[0, 1]],
+    seed: "smooth-rivers-samples",
+  });
+  const byId = id => map.cells.find(cell => cell.id === id);
+  const mainCells = [byId("c-1-1"), byId("c-2-1")];
+  map.rivers = [{
+    id: "river-0",
+    type: "MAIN",
+    role: "PRIMARY",
+    order: 0,
+    riverCells: mainCells,
+    mouth: {cell: mainCells[0], seaCell: byId("c-0-1")},
+    originalMouth: mainCells[0],
+    exit: mainCells.at(-1),
+  }];
+
+  const topology = computeRiverTopology(settings, map);
+  const originalRiverEdges = topology.edges.filter(edge => edge.type === "river");
+  const expectedRiverEdgeCount = originalRiverEdges
+    .map(edge => Math.round(H.edgeLength(edge) / 2 / TARGET_RIVER_SEGMENT_LENGTH) * 2)
+    .reduce((sum, count) => sum + count, 0);
+  assert.ok(originalRiverEdges.length > 0);
+
+  const result = smoothRivers(settings, topology);
+  const fixedNodes = result.nodes.filter(node => node.flags?.has(FIXED_FLAG));
+  const riverEdges = result.edges.filter(edge => edge.type === "river");
+  const fixed = fixedNodes.find(node => node.smoothRiverSourceEdgeId === originalRiverEdges[0].id);
+
+  assert.ok(fixed);
+  assert.ok(originalRiverEdges.every(edge => !result.edges.includes(edge)));
+  assert.equal(riverEdges.length, expectedRiverEdgeCount);
+  assert.ok(riverEdges.every(edge => Math.abs(H.edgeLength(edge) - TARGET_RIVER_SEGMENT_LENGTH) < 0.000001));
+  assert.ok(result.rivers[0].topologyEdges.every(edge => result.edges.includes(edge)));
+  assertGraphIdentity(result);
+  assertRiverTopologyGraphIdentity(result);
+}
+
+function validateSmoothRiversKeepsMergeNodesFixedWithoutMidpointSplit() {
+  const {settings, map} = createGridTerrainFixture({
+    width: 5,
+    height: 5,
+    sea: [[2, 4]],
+    seed: "smooth-rivers-merge",
+  });
+  const byId = id => map.cells.find(cell => cell.id === id);
+  const mainCells = [byId("c-2-3"), byId("c-2-2"), byId("c-2-1"), byId("c-2-0")];
+  const tributaryCells = [byId("c-1-2"), byId("c-0-2")];
+  map.rivers = [
+    {
+      id: "river-0",
+      type: "MAIN",
+      role: "PRIMARY",
+      order: 0,
+      riverCells: mainCells,
+      mouth: {cell: mainCells[0], seaCell: byId("c-2-4")},
+      originalMouth: mainCells[0],
+      exit: mainCells.at(-1),
+    },
+    {
+      id: "river-1",
+      type: "TRIBUTARY",
+      role: "FIRST_TRIBUTARY",
+      order: 1,
+      sourceRiverId: "river-0",
+      riverCells: tributaryCells,
+      mouth: {cell: tributaryCells[0], riverCell: byId("c-2-2")},
+      originalMouth: tributaryCells[0],
+      exit: tributaryCells.at(-1),
+    },
+  ];
+
+  const topology = computeRiverTopology(settings, map);
+  const junction = topology.nodes.find(node => node.type === "river-junction");
+  const junctionEdgeIds = topology.edges
+    .filter(edge => edge.type === "river" && (edge.start === junction || edge.end === junction))
+    .map(edge => edge.id);
+
+  const result = smoothRivers(settings, topology);
+  const fixedNodesFromJunctionEdges = result.nodes.filter(node => (
+    node.flags?.has(FIXED_FLAG)
+    && node.smoothRiverSourceEdgeId
+    && junctionEdgeIds.includes(node.smoothRiverSourceEdgeId)
+  ));
+
+  assert.ok(junction.flags.has(FIXED_FLAG));
+  assert.equal(fixedNodesFromJunctionEdges.length, 0);
+  assert.ok(result.edges.some(edge => edge.type === "river" && (edge.start === junction || edge.end === junction)));
+  assertGraphIdentity(result);
+  assertRiverTopologyGraphIdentity(result);
+}
+
+function validateSmoothRiversMovesInteriorNodesOnBezier() {
+  const settings = new Settings();
+  const map = new Map(settings);
+  const start = Node("a", 0, 0, "river");
+  const control = Node("b", 20, 20, "river");
+  const end = Node("c", 40, 0, "river");
+  map.nodes.push(start, control, end);
+  const first = Edge("r-0", start, control, "river", null, ["RIVER"]);
+  const second = Edge("r-1", control, end, "river", null, ["RIVER"]);
+  first.riverId = "river-0";
+  second.riverId = "river-0";
+  map.edges.push(first, second);
+  map.rivers = [{id: "river-0", topologyEdges: [first, second]}];
+
+  const result = smoothRivers(settings, map);
+  const fixedNodes = result.nodes.filter(node => node.flags?.has(FIXED_FLAG));
+
+  assert.equal(fixedNodes.length, 2);
+  assert.equal(control.x, 20);
+  assert.equal(control.y, 15);
+  assert.deepEqual(fixedNodes.map(node => [node.x, node.y]).sort(), [[10, 10], [30, 10]]);
+  assert.ok(result.rivers[0].topologyEdges.every(edge => result.edges.includes(edge)));
+  assertGraphIdentity(result);
+}
+
+function validateSmoothRiversReplayFrames() {
+  const {settings, map} = createLongSmoothRiverFixture();
+  const replay = createSmoothRiversReplay(settings, map);
+
+  assert.deepEqual(replay.frames.map(frame => frame.label), [
+    "Edge bisection",
+    "Fixed points",
+    "Edge sampling",
+    "Target Bezier",
+    "Node movement",
+    "Smoothed river",
+  ]);
+  assert.equal(replay.frames.every(frame => frame.overlay?.type === "rivers"), true);
+  assert.equal(replay.frames[1].overlay.points.some(point => point.fill === "#ef4444"), true);
+  assert.equal(replay.frames[2].overlay.points.some(point => point.fill === "#8b5cf6"), true);
+  assert.ok(replay.frames[3].overlay.paths.some(path => path.stroke === "#8b5cf6" && path.strokeWidth === 2 && path.d.includes(" Q ")));
+  assert.equal(replay.frames[4].overlay.lines.length, 5);
+  assert.ok(replay.frames[5].overlay.paths.some(path => path.stroke === "var(--sea-edge)"));
+
+  const expected = smoothRivers(settings, cloneDeepKeepFunctions(map));
+  const finalMap = replay.frames.at(-1).map;
+  assert.deepEqual(
+    finalMap.nodes.map(node => [node.id, node.x, node.y, node.flags?.has(FIXED_FLAG) ?? false]),
+    expected.nodes.map(node => [node.id, node.x, node.y, node.flags?.has(FIXED_FLAG) ?? false])
+  );
+  assert.deepEqual(
+    finalMap.edges.map(edge => [edge.id, edge.start.id, edge.end.id, edge.type, edge.riverId ?? null]),
+    expected.edges.map(edge => [edge.id, edge.start.id, edge.end.id, edge.type, edge.riverId ?? null])
+  );
+}
+
+function validateSmoothRiversReplayHydrationDrawsOverlayPoints() {
+  const {settings, map} = createLongSmoothRiverFixture();
+  const replay = hydrateReplay(serializeReplay(createSmoothRiversReplay(settings, map)));
+  const {calls, svg} = createSvgProbe();
+
+  replay.frames[4].map.drawOverlay(svg);
+
+  assert.ok(calls.some(call => call.name === "circle" && call.attrs.fill === "#8b5cf6"));
+  assert.ok(calls.some(call => call.name === "path" && String(call.attrs.d).includes(" Q ")));
+  assert.ok(calls.some(call => call.name === "line" && call.attrs.stroke === "#8b5cf6"));
+  assert.ok(calls.every(call => call.layerId === "overlay"));
+}
+
+function createLongSmoothRiverFixture() {
+  const settings = new Settings();
+  const map = new Map(settings);
+  const start = Node("a", 0, 0, "river");
+  const control = Node("b", 40, 40, "river");
+  const end = Node("c", 80, 0, "river");
+  map.nodes.push(start, control, end);
+  const first = Edge("r-0", start, control, "river", null, ["RIVER"]);
+  const second = Edge("r-1", control, end, "river", null, ["RIVER"]);
+  first.riverId = "river-0";
+  first.riverRole = "PRIMARY";
+  second.riverId = "river-0";
+  second.riverRole = "PRIMARY";
+  map.edges.push(first, second);
+  map.rivers = [{id: "river-0", topologyEdges: [first, second]}];
+  return {settings, map};
+}
+
 function assertRiverTopologyGraphIdentity(map) {
   for (const edge of map.edges) {
     assert.ok(map.nodes.includes(edge.start), `edge ${edge.id} start is detached`);
@@ -2050,6 +2242,12 @@ validateRiverTopologySplitsMainRiverCell();
 validateRiverTopologySplitsTributaryMergeCellInThree();
 validateRiverTopologyRecomputesAreasAndColors();
 validateRiverTopologyAreaTintDrawsOverlay();
+validateSmoothRiversRegisteredInPipeline();
+validateSmoothRiversSplitsAndSamplesRiverEdges();
+validateSmoothRiversKeepsMergeNodesFixedWithoutMidpointSplit();
+validateSmoothRiversMovesInteriorNodesOnBezier();
+validateSmoothRiversReplayFrames();
+validateSmoothRiversReplayHydrationDrawsOverlayPoints();
 validateAStarRiverDrawsStraightPath();
 validateTributaryDrawStartsFromPrimaryRiverExitPoint();
 validateAStarRiversReplayFrames();

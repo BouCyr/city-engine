@@ -378,7 +378,7 @@ function createCoastCentroidOverlayDraw({points}) {
   };
 }
 
-function createRiversOverlayDraw({polygons = [], arrows = [], lines = [], paths = []}) {
+function createRiversOverlayDraw({polygons = [], arrows = [], lines = [], paths = [], points = []}) {
   return function drawRiversOverlay(svg) {
     const layer = svg.getElementById("overlay");
     if (!layer) return;
@@ -413,6 +413,18 @@ function createRiversOverlayDraw({polygons = [], arrows = [], lines = [], paths 
       element.setAttribute("stroke-width", path.strokeWidth);
       element.setAttribute("stroke-opacity", path.opacity);
       element.setAttribute("d", path.d);
+      layer.appendChild(element);
+    }
+
+    for (const point of points) {
+      const element = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      element.setAttribute("cx", point.x);
+      element.setAttribute("cy", point.y);
+      element.setAttribute("r", point.r);
+      element.setAttribute("fill", point.fill);
+      element.setAttribute("stroke", point.stroke);
+      element.setAttribute("stroke-width", point.strokeWidth);
+      element.setAttribute("opacity", point.opacity);
       layer.appendChild(element);
     }
   };
