@@ -21,24 +21,27 @@ export function Map(settings){
 
           group.areas
             .filter(area => area?.draw)
-            .forEach((area) => area.draw(svgDomElt, groupElement));
+            .forEach((area) => drawAndTag(groupElement, "areas", area, () => area.draw(svgDomElt, groupElement)));
 
           if (areasLayer) areasLayer.appendChild(groupElement);
         });
 
+      const layerCountsBeforeOverlay = layerChildCounts(svgDomElt);
+
       this.cells
         .filter(cell => cell.draw)
-        .forEach(cell => cell.draw(svgDomElt));
+        .forEach(cell => drawEntityOnLayer(svgDomElt, "cells", cell));
 
       this.nodes
         .filter(node => node.draw)
-        .forEach(node => node.draw(svgDomElt));
+        .forEach(node => drawEntityOnLayer(svgDomElt, "nodes", node));
 
       this.edges
         .filter(node => node.draw)
-        .forEach(node => node.draw(svgDomElt));
+        .forEach(edge => drawEntityOnLayer(svgDomElt, "edges", edge));
 
       this.drawOverlay?.(svgDomElt);
+      tagOverlayAdditions(svgDomElt, layerCountsBeforeOverlay);
     },
 
     clear:function(svgDomElt){
@@ -56,4 +59,60 @@ export function Map(settings){
   };
 
 
+}
+
+const LEGEND_LAYER_IDS = ["areas", "cells", "edges", "nodes", "overlay"];
+
+function drawEntityOnLayer(svgDomElt, layerId, entity) {
+  const layer = svgDomElt.getElementById(layerId);
+  drawAndTag(layer, layerId, entity, () => entity.draw(svgDomElt));
+}
+
+function drawAndTag(parent, layerId, entity, drawFn) {
+  const beforeCount = childCount(parent);
+  drawFn();
+  tagNewChildren(parent, beforeCount, layerId, entity?.type ?? entity?.name ?? "unknown");
+}
+
+function tagOverlayAdditions(svgDomElt, beforeCounts) {
+  for (const layerId of LEGEND_LAYER_IDS) {
+    const layer = svgDomElt.getElementById(layerId);
+    tagNewChildren(layer, beforeCounts.get(layerId) ?? 0, layerId, null);
+  }
+}
+
+function layerChildCounts(svgDomElt) {
+  const counts = new globalThis.Map();
+  for (const layerId of LEGEND_LAYER_IDS) {
+    counts.set(layerId, childCount(svgDomElt.getElementById(layerId)));
+  }
+  return counts;
+}
+
+function childCount(parent) {
+  return parent?.children?.length ?? parent?.childNodes?.length ?? 0;
+}
+
+function tagNewChildren(parent, beforeCount, layerId, type) {
+  const children = parent?.children ?? parent?.childNodes;
+  if (!children || typeof beforeCount !== "number") return;
+
+  for (let index = beforeCount; index < children.length; index += 1) {
+    const child = children[index];
+    if (!child?.setAttribute || child.getAttribute?.("data-legend-layer")) continue;
+
+    child.setAttribute("data-legend-layer", layerId);
+    child.setAttribute("data-legend-type", String(type ?? inferLegendType(child)));
+  }
+}
+
+function inferLegendType(element) {
+  const className = typeof element.getAttribute === "function"
+    ? element.getAttribute("class")
+    : element.attrs?.class;
+  if (className) {
+    return String(className).split(/\s+/).filter(Boolean).at(-1);
+  }
+
+  return String(element.tagName ?? element.name ?? "overlay").toLowerCase();
 }

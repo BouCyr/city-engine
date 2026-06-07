@@ -94,10 +94,16 @@ function now() {
 function collectMapMetrics(map) {
   return {
     nodes: collectEntityMetrics(map.nodes),
+    edges: collectEntityMetrics(map.edges),
     cells: collectEntityMetrics(map.cells),
-    areas: collectEntityMetrics(map.areas),
+    areas: collectEntityMetrics(flattenAreas(map.areas)),
     rivers: collectEntityMetrics(map.rivers),
   };
+}
+
+function flattenAreas(areaGroups) {
+  if (!Array.isArray(areaGroups)) return [];
+  return areaGroups.flatMap((group) => Array.isArray(group?.areas) ? group.areas : []);
 }
 
 function collectEntityMetrics(entities) {

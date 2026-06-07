@@ -222,6 +222,11 @@
   white-space: nowrap;
 }
 
+.metrics-section td.metric-sample-cell,
+.metrics-section th:nth-child(2) {
+  text-align: center;
+}
+
 .metric-label-with-toggle {
   display: flex;
   align-items: center;
@@ -246,6 +251,74 @@
 .metric-breakdown-toggle:focus-visible {
   outline: 1px solid var(--accent-color);
   outline-offset: 1px;
+}
+
+.metric-visibility-toggle,
+.metric-sample-button,
+.metric-sample-fill {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.metric-visibility-toggle {
+  text-align: left;
+}
+
+.metric-visibility-toggle:disabled,
+.metric-sample-button:disabled,
+.metric-sample-fill:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.metric-visibility-toggle[aria-pressed="true"],
+.metric-sample-button[aria-pressed="true"],
+.metric-sample-fill[aria-pressed="true"] {
+  opacity: 0.45;
+}
+
+.metric-visibility-toggle:focus-visible,
+.metric-sample-button:focus-visible,
+.metric-sample-fill:focus-visible {
+  outline: 1px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.metric-sample-button {
+  display: inline-grid;
+  place-items: center;
+  width: 3.5rem;
+  height: 1.2rem;
+}
+
+.metric-sample-svg {
+  width: 3.5rem;
+  height: 1.125rem;
+  overflow: visible;
+}
+
+.metric-sample-fill {
+  display: inline-block;
+  width: 3.5rem;
+  height: 1rem;
+  border: 1px solid color-mix(in srgb, var(--text-color) 28%, transparent);
+  border-radius: 3px;
+}
+
+.metric-sample-fill-stack {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  overflow: hidden;
+}
+
+.metric-sample-fill-stack span {
+  min-width: 0;
 }
 
 .metric-breakdown-row > td {

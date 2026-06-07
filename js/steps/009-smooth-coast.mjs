@@ -2,7 +2,7 @@ import {cloneDeepKeepFunctions} from "../data/clone.mjs";
 import {Edge} from "../data/edge.mjs";
 import * as H from "../data/helper.mjs";
 import {Node} from "../data/nodes.mjs";
-import {TERRAIN_COAST} from "./004-sea-land.mjs";
+import {TERRAIN_COAST, TERRAIN_SEA} from "./004-sea-land.mjs";
 
 export const COAST_EDGE_TYPE = "coast";
 export const COAST_GAP_FLAG = "COAST_GAP";

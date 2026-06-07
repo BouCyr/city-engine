@@ -1,6 +1,8 @@
 import {steps} from "./steps.mjs";
 import {runPipeline} from "./pipeline.mjs";
 import {hydrateReplay, plainSettings, serializeMap} from "./replay-service.mjs";
+import {areaBoundaryPath} from "./data/area.mjs";
+import {orderedCellPoints} from "./data/cell.mjs";
 import {createDefaultSettings, renderStepSettingsForm} from "./ui/settings-panel.mjs";
 
 export let settings = createDefaultSettings();
@@ -8,6 +10,7 @@ export let map;
 export let stepResults = [];
 
 let svgDomElt;
+let renderedTypeKeys = new Set();
 let selectedStepIndex = steps.length - 1;
 let hoveredStepIndex = null;
 let stepSettingsOpen = false;
@@ -23,6 +26,31 @@ const REPLAY_INTERVAL_MS = 2000;
 const ZOOM_IN_FACTOR = 0.9;
 const ZOOM_OUT_FACTOR = 1.1;
 const MIN_VIEW_RATIO = 0.12;
+const SVG_NS = "http://www.w3.org/2000/svg";
+const ENTITY_METRICS = [
+  {label: "Nodes", key: "nodes", layerId: "nodes"},
+  {label: "Edges", key: "edges", layerId: "edges"},
+  {label: "Cells", key: "cells", layerId: "cells"},
+  {label: "Areas", key: "areas", layerId: "areas"},
+];
+const SAMPLE_ATTRS = [
+  "class",
+  "fill",
+  "fill-opacity",
+  "stroke",
+  "stroke-width",
+  "stroke-opacity",
+  "stroke-dasharray",
+  "stroke-linecap",
+  "stroke-linejoin",
+  "opacity",
+];
+
+const mapDisplayState = {
+  hiddenLayers: new Set(),
+  hiddenTypes: new Set(),
+  debugTypes: new Set(),
+};
 
 const camera = {
   x: 0,
@@ -59,6 +87,9 @@ function renderCurrentMap() {
   applyCameraForSize(displayMap?.size ?? settings.size);
   displayMap.clear(svgDomElt);
   displayMap.draw(svgDomElt);
+  renderedTypeKeys = collectRenderedTypeKeys(svgDomElt);
+  drawDebugDisplayEntities(displayMap);
+  applyMapDisplayVisibility();
   renderStepDetails(steps[index], result);
   renderStepExplanation();
 }
@@ -600,7 +631,7 @@ function createMetricsDetails(metrics) {
   summary.textContent = "Metrics";
   wrapper.appendChild(summary);
 
-  ["Metric", "Before", "After"].forEach((label) => {
+  ["Metric", "Sample", "Before", "After"].forEach((label) => {
     const th = document.createElement("th");
     th.scope = "col";
     th.textContent = label;
@@ -610,12 +641,8 @@ function createMetricsDetails(metrics) {
   thead.appendChild(headerRow);
   table.append(thead, tbody);
 
-  [
-    ["Nodes", "nodes"],
-    ["Cells", "cells"],
-    ["Areas", "areas"],
-  ].forEach(([label, key]) => {
-    createEntityMetricRows(label, metrics.before?.[key], metrics.after?.[key])
+  ENTITY_METRICS.forEach((definition) => {
+    createEntityMetricRows(definition, metrics.before?.[definition.key], metrics.after?.[definition.key])
       .forEach((row) => tbody.appendChild(row));
   });
 
@@ -624,13 +651,17 @@ function createMetricsDetails(metrics) {
   return wrapper;
 }
 
-function createEntityMetricRows(label, before = emptyEntityMetrics(), after = emptyEntityMetrics()) {
+function createEntityMetricRows(definition, before = emptyEntityMetrics(), after = emptyEntityMetrics()) {
   const row = document.createElement("tr");
   const labelCell = document.createElement("td");
+  const sampleCell = document.createElement("td");
   const beforeCell = document.createElement("td");
   const afterCell = document.createElement("td");
   const typeNames = sortedTypeNames(before, after);
+  const activeTypeNames = Object.keys(after?.types ?? {});
 
+  sampleCell.className = "metric-sample-cell";
+  sampleCell.appendChild(createMetricLayerSample(definition, activeTypeNames));
   beforeCell.textContent = formatCount(before.count);
   afterCell.textContent = formatCount(after.count);
 
@@ -639,12 +670,17 @@ function createEntityMetricRows(label, before = emptyEntityMetrics(), after = em
     const breakdownCell = document.createElement("td");
     const toggle = document.createElement("button");
     const labelText = document.createElement("span");
-    const breakdownId = `metric-breakdown-${label.toLowerCase()}`;
+    const layerButton = createMetricVisibilityButton(
+      definition.label,
+      isLayerVisible(definition.layerId, activeTypeNames),
+      () => toggleEntityLayer(definition.layerId, activeTypeNames)
+    );
+    const breakdownId = `metric-breakdown-${definition.key}`;
 
     breakdownRow.className = "metric-breakdown-row";
     breakdownRow.id = breakdownId;
     breakdownRow.hidden = true;
-    breakdownCell.colSpan = 3;
+    breakdownCell.colSpan = 4;
 
     toggle.type = "button";
     toggle.className = "metric-breakdown-toggle";
@@ -658,18 +694,22 @@ function createEntityMetricRows(label, before = emptyEntityMetrics(), after = em
       toggle.textContent = expanded ? ">" : "v";
     });
 
-    labelText.textContent = label;
+    labelText.appendChild(layerButton);
     labelCell.className = "metric-label-with-toggle";
     labelCell.append(toggle, labelText);
-    row.append(labelCell, beforeCell, afterCell);
+    row.append(labelCell, sampleCell, beforeCell, afterCell);
 
-    breakdownCell.appendChild(createTypeBreakdownTable(typeNames, before, after));
+    breakdownCell.appendChild(createTypeBreakdownTable(definition, typeNames, before, after));
     breakdownRow.appendChild(breakdownCell);
     return [row, breakdownRow];
   }
 
-  labelCell.textContent = label;
-  row.append(labelCell, beforeCell, afterCell);
+  labelCell.appendChild(createMetricVisibilityButton(
+    definition.label,
+    isLayerVisible(definition.layerId, activeTypeNames),
+    () => toggleEntityLayer(definition.layerId, activeTypeNames)
+  ));
+  row.append(labelCell, sampleCell, beforeCell, afterCell);
   return [row];
 }
 
@@ -679,20 +719,20 @@ function createDurationMetricRow(durationMs) {
   const valueCell = document.createElement("td");
 
   labelCell.textContent = "Step duration";
-  valueCell.colSpan = 2;
+  valueCell.colSpan = 3;
   valueCell.textContent = `${formatDuration(durationMs)} ms`;
   row.append(labelCell, valueCell);
   return row;
 }
 
-function createTypeBreakdownTable(typeNames, before, after) {
+function createTypeBreakdownTable(definition, typeNames, before, after) {
   const table = document.createElement("table");
   const thead = document.createElement("thead");
   const tbody = document.createElement("tbody");
   const headerRow = document.createElement("tr");
 
   table.className = "metric-breakdown-table";
-  ["Type", "Before", "After"].forEach((label) => {
+  ["Type", "Sample", "Before", "After"].forEach((label) => {
     const th = document.createElement("th");
     th.scope = "col";
     th.textContent = label;
@@ -702,17 +742,395 @@ function createTypeBreakdownTable(typeNames, before, after) {
 
   typeNames.forEach((typeName) => {
     const row = document.createElement("tr");
-    [typeName, formatCount(before.types?.[typeName] ?? 0), formatCount(after.types?.[typeName] ?? 0)]
-      .forEach((value) => {
-        const cell = document.createElement("td");
-        cell.textContent = value;
-        row.appendChild(cell);
-      });
+    const typeCell = document.createElement("td");
+    const sampleCell = document.createElement("td");
+    const beforeCell = document.createElement("td");
+    const afterCell = document.createElement("td");
+    const afterCount = after.types?.[typeName] ?? 0;
+    const enabled = afterCount > 0;
+
+    typeCell.appendChild(createMetricVisibilityButton(
+      formatTypeLabel(typeName),
+      isEntityTypeVisible(definition.layerId, typeName),
+      () => toggleEntityType(definition.layerId, typeName),
+      !enabled
+    ));
+    sampleCell.className = "metric-sample-cell";
+    sampleCell.appendChild(createMetricTypeSample(definition.layerId, typeName, enabled));
+    beforeCell.textContent = formatCount(before.types?.[typeName] ?? 0);
+    afterCell.textContent = formatCount(afterCount);
+    row.append(typeCell, sampleCell, beforeCell, afterCell);
     tbody.appendChild(row);
   });
 
   table.append(thead, tbody);
   return table;
+}
+
+function createMetricVisibilityButton(label, visible, onClick, disabled = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "metric-visibility-toggle";
+  button.setAttribute("aria-pressed", String(!visible));
+  button.disabled = disabled;
+  button.textContent = label;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function createMetricLayerSample(definition, typeNames) {
+  const activeTypes = typeNames.length > 0 ? typeNames : [null];
+  if (definition.layerId === "areas" || definition.layerId === "cells") {
+    const swatches = document.createElement("button");
+    swatches.type = "button";
+    swatches.className = "metric-sample-fill metric-sample-fill-stack";
+    swatches.setAttribute("aria-label", `${definition.label} visibility`);
+    swatches.setAttribute("aria-pressed", String(!isLayerVisible(definition.layerId, typeNames)));
+    swatches.addEventListener("click", () => toggleEntityLayer(definition.layerId, typeNames));
+
+    activeTypes.slice(0, 3).forEach((typeName) => {
+      const swatch = document.createElement("span");
+      swatch.style.background = colorForType(typeName, definition.layerId);
+      swatches.appendChild(swatch);
+    });
+    return swatches;
+  }
+
+  const firstType = activeTypes[0];
+  return createSampleButton(
+    `${definition.label} visibility`,
+    isLayerVisible(definition.layerId, typeNames),
+    () => toggleEntityLayer(definition.layerId, typeNames),
+    createSampleSvg(definition.layerId, firstType)
+  );
+}
+
+function createMetricTypeSample(layerId, typeName, enabled) {
+  if (layerId === "areas" || layerId === "cells") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "metric-sample-fill";
+    button.style.background = colorForType(typeName, layerId);
+    button.disabled = !enabled;
+    button.setAttribute("aria-label", `${formatTypeLabel(typeName)} visibility`);
+    button.setAttribute("aria-pressed", String(!isEntityTypeVisible(layerId, typeName)));
+    button.addEventListener("click", () => toggleEntityType(layerId, typeName));
+    return button;
+  }
+
+  return createSampleButton(
+    `${formatTypeLabel(typeName)} visibility`,
+    isEntityTypeVisible(layerId, typeName),
+    () => toggleEntityType(layerId, typeName),
+    createSampleSvg(layerId, typeName),
+    !enabled
+  );
+}
+
+function createSampleButton(label, visible, onClick, sample, disabled = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "metric-sample-button";
+  button.disabled = disabled;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-pressed", String(!visible));
+  button.appendChild(sample);
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function createSampleSvg(layerId, typeName) {
+  const sample = document.createElementNS(SVG_NS, "svg");
+  const source = renderedElementForType(layerId, typeName);
+  sample.setAttribute("class", "metric-sample-svg");
+  sample.setAttribute("viewBox", "0 0 56 18");
+  sample.setAttribute("aria-hidden", "true");
+
+  if (layerId === "nodes") {
+    sample.appendChild(createSampleCircle(source, typeName));
+  } else if (layerId === "edges") {
+    sample.appendChild(createSamplePath(source, typeName));
+  } else {
+    sample.appendChild(createSamplePolygon(source, typeName, layerId));
+  }
+  return sample;
+}
+
+function createSampleCircle(source, typeName) {
+  const circle = document.createElementNS(SVG_NS, "circle");
+  copySampleAttrs(source, circle);
+  circle.setAttribute("cx", "28");
+  circle.setAttribute("cy", "9");
+  circle.setAttribute("r", "5");
+  if (!circle.getAttribute("fill") && !circle.getAttribute("class")) {
+    circle.setAttribute("fill", colorForType(typeName, "nodes"));
+  }
+  return circle;
+}
+
+function createSamplePath(source, typeName) {
+  const path = document.createElementNS(SVG_NS, "path");
+  copySampleAttrs(source, path);
+  path.setAttribute("d", "M 3 9 L 53 9");
+  if (!path.getAttribute("fill")) path.setAttribute("fill", "none");
+  if (!path.getAttribute("stroke") && !path.getAttribute("class")) {
+    path.setAttribute("stroke", colorForType(typeName, "edges"));
+  }
+  if (!path.getAttribute("stroke-width") && !path.getAttribute("class")) {
+    path.setAttribute("stroke-width", "2");
+  }
+  return path;
+}
+
+function createSamplePolygon(source, typeName, layerId) {
+  const polygon = document.createElementNS(SVG_NS, "polygon");
+  copySampleAttrs(source, polygon);
+  polygon.setAttribute("points", "4,14 18,4 52,6 45,15");
+  if (!polygon.getAttribute("fill") && !polygon.getAttribute("class")) {
+    polygon.setAttribute("fill", colorForType(typeName, layerId));
+  }
+  return polygon;
+}
+
+function copySampleAttrs(source, target) {
+  if (!source?.getAttribute) return;
+  for (const attr of SAMPLE_ATTRS) {
+    const value = source.getAttribute(attr);
+    if (value !== null && value !== "") {
+      target.setAttribute(attr, value);
+    }
+  }
+}
+
+function collectRenderedTypeKeys(svg) {
+  const keys = new Set();
+  const elements = svg?.querySelectorAll?.("[data-legend-layer][data-legend-type]") ?? [];
+  for (const element of elements) {
+    keys.add(typeKey(element.getAttribute("data-legend-layer"), element.getAttribute("data-legend-type")));
+  }
+  return keys;
+}
+
+function renderedElementForType(layerId, typeName) {
+  return svgDomElt?.querySelector?.(`[data-legend-layer="${cssEscape(layerId)}"][data-legend-type="${cssEscape(typeName)}"]`) ?? null;
+}
+
+function isLayerVisible(layerId, typeNames) {
+  if (typeNames.length === 0) return false;
+  return typeNames.some((typeName) => isEntityTypeVisible(layerId, typeName));
+}
+
+function isEntityTypeVisible(layerId, typeName) {
+  const key = typeKey(layerId, typeName);
+  if (mapDisplayState.hiddenLayers.has(layerId) || mapDisplayState.hiddenTypes.has(key)) return false;
+  return renderedTypeKeys.has(key) || mapDisplayState.debugTypes.has(key);
+}
+
+function toggleEntityLayer(layerId, typeNames) {
+  if (typeNames.length === 0) return;
+
+  const visible = isLayerVisible(layerId, typeNames);
+  if (visible) {
+    mapDisplayState.hiddenLayers.add(layerId);
+    renderCurrentMap();
+    return;
+  }
+
+  mapDisplayState.hiddenLayers.delete(layerId);
+  for (const typeName of typeNames) {
+    const key = typeKey(layerId, typeName);
+    mapDisplayState.hiddenTypes.delete(key);
+    if (!renderedTypeKeys.has(key)) {
+      mapDisplayState.debugTypes.add(key);
+    }
+  }
+  renderCurrentMap();
+}
+
+function toggleEntityType(layerId, typeName) {
+  const key = typeKey(layerId, typeName);
+  mapDisplayState.hiddenLayers.delete(layerId);
+
+  if (renderedTypeKeys.has(key)) {
+    toggleSet(mapDisplayState.hiddenTypes, key);
+  } else {
+    toggleSet(mapDisplayState.debugTypes, key);
+    mapDisplayState.hiddenTypes.delete(key);
+  }
+
+  renderCurrentMap();
+}
+
+function drawDebugDisplayEntities(displayMap) {
+  if (!displayMap) return;
+
+  for (const key of mapDisplayState.debugTypes) {
+    const [layerId, typeName] = splitTypeKey(key);
+    if (!layerId || renderedTypeKeys.has(key)) continue;
+
+    if (layerId === "nodes") {
+      drawDebugNodes(displayMap, typeName);
+    } else if (layerId === "edges") {
+      drawDebugEdges(displayMap, typeName);
+    } else if (layerId === "cells") {
+      drawDebugCells(displayMap, typeName);
+    } else if (layerId === "areas") {
+      drawDebugAreas(displayMap, typeName);
+    }
+  }
+}
+
+function applyMapDisplayVisibility() {
+  const elements = svgDomElt?.querySelectorAll?.("[data-legend-layer][data-legend-type]") ?? [];
+  for (const element of elements) {
+    const layerId = element.getAttribute("data-legend-layer");
+    const typeName = element.getAttribute("data-legend-type");
+    element.classList?.toggle(
+      "legend-hidden",
+      mapDisplayState.hiddenLayers.has(layerId) || mapDisplayState.hiddenTypes.has(typeKey(layerId, typeName))
+    );
+  }
+}
+
+function drawDebugNodes(displayMap, typeName) {
+  const layer = svgDomElt?.getElementById("nodes");
+  if (!layer) return;
+
+  for (const node of displayMap.nodes ?? []) {
+    if (node.type !== typeName) continue;
+    const circle = document.createElementNS(SVG_NS, "circle");
+    circle.setAttribute("cx", node.x);
+    circle.setAttribute("cy", node.y);
+    circle.setAttribute("r", "6");
+    circle.setAttribute("fill", colorForType(typeName, "nodes"));
+    circle.setAttribute("stroke", "var(--bg-color)");
+    circle.setAttribute("stroke-width", "2");
+    tagDebugElement(circle, "nodes", typeName);
+    layer.appendChild(circle);
+  }
+}
+
+function drawDebugEdges(displayMap, typeName) {
+  const layer = svgDomElt?.getElementById("edges");
+  if (!layer) return;
+
+  for (const edge of displayMap.edges ?? []) {
+    if (edge.type !== typeName || !edge.start || !edge.end) continue;
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", `M ${edge.start.x} ${edge.start.y} L ${edge.end.x} ${edge.end.y}`);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", colorForType(typeName, "edges"));
+    path.setAttribute("stroke-width", edge.type === "river" ? "7" : "2");
+    tagDebugElement(path, "edges", typeName);
+    layer.appendChild(path);
+  }
+}
+
+function drawDebugCells(displayMap, typeName) {
+  const layer = svgDomElt?.getElementById("cells");
+  if (!layer) return;
+
+  for (const cell of displayMap.cells ?? []) {
+    if (cell.type !== typeName) continue;
+    const points = safeOrderedCellPoints(cell);
+    if (points.length < 3) continue;
+    const polygon = document.createElementNS(SVG_NS, "polygon");
+    polygon.setAttribute("points", points.map(point => `${point.x},${point.y}`).join(" "));
+    polygon.setAttribute("fill", colorForType(typeName, "cells"));
+    polygon.setAttribute("fill-opacity", "0.28");
+    polygon.setAttribute("stroke", colorForType(typeName, "cells"));
+    polygon.setAttribute("stroke-opacity", "0.75");
+    polygon.setAttribute("stroke-width", "2");
+    tagDebugElement(polygon, "cells", typeName);
+    layer.appendChild(polygon);
+  }
+}
+
+function drawDebugAreas(displayMap, typeName) {
+  const layer = svgDomElt?.getElementById("areas");
+  if (!layer) return;
+
+  for (const group of displayMap.areas ?? []) {
+    for (const area of group?.areas ?? []) {
+      if (area.type !== typeName) continue;
+      const d = areaBoundaryPath(area.cells ?? []);
+      if (!d) continue;
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", d);
+      path.setAttribute("fill", colorForType(typeName, "areas"));
+      path.setAttribute("fill-opacity", "0.36");
+      path.setAttribute("stroke", "none");
+      path.setAttribute("fill-rule", "evenodd");
+      tagDebugElement(path, "areas", typeName);
+      layer.appendChild(path);
+    }
+  }
+}
+
+function safeOrderedCellPoints(cell) {
+  try {
+    return orderedCellPoints(cell);
+  } catch {
+    return [];
+  }
+}
+
+function tagDebugElement(element, layerId, typeName) {
+  element.setAttribute("data-legend-layer", layerId);
+  element.setAttribute("data-legend-type", typeName);
+  element.setAttribute("data-debug-display", "true");
+}
+
+function colorForType(typeName, layerId) {
+  if (typeName === "SEA" || typeName === "terrain-sea") return "var(--sea-fill)";
+  if (typeName === "LAND" || typeName === "terrain-land") return "var(--land-fill)";
+  if (typeName === "COAST" || typeName === "coast" || typeName === "terrain-coast") return "var(--coast-edge)";
+  if (typeName === "river") return "var(--sea-edge)";
+  if (layerId === "nodes") return "#8b5cf6";
+  if (layerId === "edges") return "var(--land-edge)";
+  return colorFromString(String(typeName ?? layerId));
+}
+
+function colorFromString(value) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+  }
+  return `hsl(${Math.abs(hash) % 360} 58% 62%)`;
+}
+
+function formatTypeLabel(type) {
+  const value = String(type ?? "unknown");
+  if (value === "POI") return "POI";
+
+  return value
+    .replace(/^terrain-/, "")
+    .replace(/-/g, " ")
+    .replace(/_/g, " ")
+    .toLowerCase();
+}
+
+function typeKey(layerId, typeName) {
+  return `${layerId}:${typeName}`;
+}
+
+function splitTypeKey(key) {
+  const separator = key.indexOf(":");
+  if (separator < 0) return [null, null];
+  return [key.slice(0, separator), key.slice(separator + 1)];
+}
+
+function toggleSet(set, value) {
+  if (set.has(value)) {
+    set.delete(value);
+  } else {
+    set.add(value);
+  }
+}
+
+function cssEscape(value) {
+  if (globalThis.CSS?.escape) return globalThis.CSS.escape(String(value));
+  return String(value).replace(/["\\]/g, "\\$&");
 }
 
 function sortedTypeNames(before, after) {

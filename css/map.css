@@ -26,6 +26,10 @@
   cursor: grabbing;
 }
 
+[data-legend-layer].legend-hidden {
+  display: none;
+}
+
 .cell {
 }
 
