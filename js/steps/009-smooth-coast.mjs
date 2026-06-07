@@ -1,23 +1,20 @@
 import {cloneDeepKeepFunctions} from "../data/clone.mjs";
-import {orderedCellPoints} from "../data/cell.mjs";
 import {Edge} from "../data/edge.mjs";
 import * as H from "../data/helper.mjs";
 import {Node} from "../data/nodes.mjs";
-import {TERRAIN_COAST, TERRAIN_LAND, TERRAIN_SEA} from "./004-sea-land.mjs";
+import {TERRAIN_COAST} from "./004-sea-land.mjs";
 
 export const COAST_EDGE_TYPE = "coast";
 export const COAST_GAP_FLAG = "COAST_GAP";
 export const FIXED_FLAG = "FIXED";
 export const TARGET_COAST_SEGMENT_LENGTH = 10;
 
-const GAP_SIZE = 10;
 const FIXED_COLOR = "#ef4444";
 const VIOLET_COLOR = "#8b5cf6";
 const COAST_COLOR = "var(--coast-edge)";
 
 export function smoothCoast(settings, map) {
   const context = createSmoothCoastContext(map);
-  correctSingularCoastNodes(context);
   refreshCoastEdges(map);
   context.coastEdges = map.edges.filter(isSmoothableCoastEdge);
   if (context.coastEdges.length === 0) return map;
@@ -33,28 +30,8 @@ export function createReplay(settings, inputMap) {
   const map = cloneDeepKeepFunctions(inputMap);
   const context = createSmoothCoastContext(map);
   const frames = [];
-
-  const singular = findSingularCoastNodes(map);
-  frames.push(replayFrame(
-    map,
-    "Singular coast nodes",
-    "Land cells that touch only at a point are detected before smoothing.",
-    overlayWithPoints(redPoints(singular.map(entry => entry.node)))
-  ));
-
-  correctSingularCoastNodes(context);
   refreshCoastEdges(map);
   context.coastEdges = map.edges.filter(isSmoothableCoastEdge);
-  frames.push(replayFrame(
-    map,
-    "Sea gap edges",
-    "Small coast edges are inserted between separated land corners to open a sea gap.",
-    {
-      ...emptyCoastOverlay(),
-      lines: redGapLines(context.gapEdges),
-      points: redPoints(context.singularNodes),
-    }
-  ));
 
   if (context.coastEdges.length === 0) return {frames};
 
@@ -124,130 +101,16 @@ function createSmoothCoastContext(map) {
     coastEdges: map.edges.filter(isSmoothableCoastEdge),
     fixedNodes: [],
     sampleNodes: [],
-    singularNodes: [],
-    gapEdges: [],
   };
 }
 
 function refreshCoastEdges(map) {
   for (const edge of map.edges) {
-    if (edge.flags?.has(TERRAIN_COAST) || edge.flags?.has(COAST_GAP_FLAG)) {
+    if (edge.flags?.has(TERRAIN_COAST)) {
       edge.type = COAST_EDGE_TYPE;
       setTerrainEdgeDraw(edge);
     }
   }
-}
-
-function correctSingularCoastNodes(context) {
-  for (const entry of findSingularCoastNodes(context.map)) {
-    context.singularNodes.push(entry.node);
-    const replacements = [];
-    for (const component of entry.components) {
-      const replacement = createComponentNode(context.map, entry.node, component);
-      replacements.push(replacement);
-      rewireComponentNode(context.map, entry.node, replacement, component);
-    }
-    context.gapEdges.push(...createGapEdges(context.map, entry.node, replacements));
-  }
-}
-
-function findSingularCoastNodes(map) {
-  return map.nodes
-    .map((node) => ({node, components: landComponentsAtNode(map, node)}))
-    .filter(({components}) => components.length > 1);
-}
-
-function landComponentsAtNode(map, node) {
-  const landCells = map.cells.filter((cell) => cell.type === TERRAIN_LAND && cellUsesNode(cell, node));
-  const remaining = new Set(landCells);
-  const components = [];
-
-  while (remaining.size > 0) {
-    const first = [...remaining].sort((a, b) => String(a.id).localeCompare(String(b.id)))[0];
-    const component = [];
-    const queue = [first];
-    remaining.delete(first);
-
-    while (queue.length > 0) {
-      const current = queue.shift();
-      component.push(current);
-      for (const other of [...remaining]) {
-        if (!H.cellsEdge(current, other)) continue;
-        remaining.delete(other);
-        queue.push(other);
-      }
-    }
-    components.push(component);
-  }
-
-  return components;
-}
-
-function cellUsesNode(cell, node) {
-  return orderedCellPoints(cell).includes(node);
-}
-
-function createComponentNode(map, source, component) {
-  const target = averageCentroid(component);
-  const dx = target.x - source.x;
-  const dy = target.y - source.y;
-  const length = Math.hypot(dx, dy) || 1;
-  const node = Node(
-    `coast-gap-node-${map.nodes.length}`,
-    source.x + (dx / length) * GAP_SIZE,
-    source.y + (dy / length) * GAP_SIZE,
-    "coast"
-  );
-  map.nodes.push(node);
-  return node;
-}
-
-function averageCentroid(cells) {
-  const total = cells.reduce((sum, cell) => {
-    const centroid = H.cellCentroid(cell);
-    sum.x += centroid.x;
-    sum.y += centroid.y;
-    return sum;
-  }, {x: 0, y: 0});
-  return {
-    x: total.x / cells.length,
-    y: total.y / cells.length,
-  };
-}
-
-function rewireComponentNode(map, source, replacement, component) {
-  const componentSet = new Set(component);
-  const affectedEdges = new Set();
-  for (const cell of component) {
-    for (const edge of cell.edges) {
-      if (edge.start === source || edge.end === source) affectedEdges.add(edge);
-    }
-  }
-
-  for (const edge of affectedEdges) {
-    if (!componentSet.has(edge.leftCell) && !componentSet.has(edge.rightCell)) continue;
-    source.edges?.delete(edge);
-    if (edge.start === source) edge.start = replacement;
-    if (edge.end === source) edge.end = replacement;
-    replacement.edges.add(edge);
-  }
-}
-
-function createGapEdges(map, source, replacements) {
-  if (replacements.length < 2) return [];
-  const ordered = [...replacements].sort((a, b) => Math.atan2(a.y - source.y, a.x - source.x) - Math.atan2(b.y - source.y, b.x - source.x));
-  const edges = [];
-  for (let index = 0; index < ordered.length; index += 1) {
-    const start = ordered[index];
-    const end = ordered[(index + 1) % ordered.length];
-    if (start === end) continue;
-    const edge = Edge(`coast-gap-edge-${map.edges.length}`, start, end, COAST_EDGE_TYPE, null, [TERRAIN_SEA, COAST_GAP_FLAG]);
-    setTerrainEdgeDraw(edge);
-    edge.smoothCoastGap = true;
-    map.edges.push(edge);
-    edges.push(edge);
-  }
-  return edges;
 }
 
 function setTerrainEdgeDraw(edge) {
@@ -436,7 +299,8 @@ function walkToFixedNode(start, first, adjacency, visitedEdges) {
 }
 
 function isSmoothableCoastEdge(edge) {
-  return edge.type === COAST_EDGE_TYPE || edge.flags?.has(TERRAIN_COAST) || edge.flags?.has(COAST_GAP_FLAG);
+  return (edge.type === COAST_EDGE_TYPE || edge.flags?.has(TERRAIN_COAST))
+    && !edge.flags?.has("Boundary");
 }
 
 function compareEdges(a, b) {
@@ -514,17 +378,6 @@ function violetPoints(nodes) {
 
 function uniqueNodes(nodes) {
   return nodes.filter((node, index) => nodes.indexOf(node) === index);
-}
-
-function redGapLines(edges) {
-  return edges.map(edge => ({
-    x1: edge.start.x,
-    y1: edge.start.y,
-    x2: edge.end.x,
-    y2: edge.end.y,
-    stroke: FIXED_COLOR,
-    strokeWidth: 4,
-  }));
 }
 
 function movementLines(moves) {

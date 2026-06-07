@@ -3,6 +3,7 @@ import * as GATHER  from "./steps/001-gather.mjs";
 import * as LLOYD  from "./steps/002-lloyd.mjs";
 import * as PRUNE  from "./steps/003-prune.mjs";
 import * as SEA_LAND from "./steps/004-sea-land.mjs";
+import * as NEEDLES from "./steps/005.1-needles.mjs";
 import * as RIVERS from "./steps/005.2-rivers.mjs";
 import * as TRIBUTARIES from "./steps/006-tributaries.mjs";
 import * as RIVER_TOPOLOGY from "./steps/007-river-topology.mjs";
@@ -89,6 +90,21 @@ export const steps = [
     renderExplanationExtras: SEA_LAND.renderExplanationExtras,
   },
   {
+    title:"Needles",
+    process:NEEDLES.markNeedles,
+    createReplay: NEEDLES.createReplay,
+    description: (settings, stepMap) => [
+      `This step scans every node that connects multiple terrain sectors, marks SEA-LAND-SEA separators as NEEDLE cells, then flips those land cells to SEA before rivers are computed.`,
+      `Detected needle cells keep a red marker to make the correction visible in the step view.`,
+    ],
+    explanation: (settings, stepResult) => [
+      `Needles looks at each node's ordered sectors and finds land cells that are isolated by sea on both sides.`,
+      `When two or more land sectors around the same node satisfy that condition, the step flags all of them as <em>NEEDLE</em> and converts them to SEA.`,
+      `After conversion, terrain edge classes and terrain areas are recomputed so the subsequent terrain state is consistent for the next step.`,
+      `Replay shows the candidate nodes as red dots (r=15), paints affected cells violet before flipping them, then shows the final post-flip terrain.`,
+    ],
+  },
+  {
     title:"Rivers",
     process:RIVERS.computeRivers,
     createReplay: RIVERS.createReplay,
@@ -156,13 +172,13 @@ export const steps = [
     process:SMOOTH_COAST.smoothCoast,
     createReplay: SMOOTH_COAST.createReplay,
     description: (settings, stepMap) => [
-      `This step opens tiny sea gaps where land cells touch only at a singular point, then smooths the coast with the same fixed-anchor and Bezier sampling workflow used for rivers.`,
-      `Singular land contacts are separated by <em>1</em> SVG unit so non-neighboring land areas no longer share a canonical corner node.`,
+      `This step smooths sea-to-land transition edges using the same fixed-anchor and Bezier sampling workflow used for rivers.`,
+      `Only non-boundary coast edges are smoothed so the map border remains visually stable.`,
       `Coast edges are sampled into regular sub-edges, then intermediate nodes are moved onto quadratic Bezier curves between fixed anchors.`,
     ],
     explanation: (settings, stepResult) => [
-      `Smooth coast first detects land cells that meet at a point without sharing an edge. Each disconnected land component receives its own replacement corner node, and short coast gap edges mark the sea space between them.`,
-      `After that correction, the step splits coast edges at fixed midpoint anchors, samples sections near <em>${SMOOTH_COAST.TARGET_COAST_SEGMENT_LENGTH}</em> units, and moves non-fixed sample nodes onto target Bezier curves.`,
+      `Smooth coast splits each eligible coast edge at a fixed midpoint and then inserts regular sample nodes by target segment length.`,
+      `It builds a path graph from fixed anchor nodes and non-fixed sample nodes, then moves non-fixed nodes onto quadratic Bezier curves constrained by neighboring anchors.`,
     ],
     renderExplanationExtras: null,
   }
