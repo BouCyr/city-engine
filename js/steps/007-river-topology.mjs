@@ -3,23 +3,24 @@ import {Cell, orderedCellPoints} from "../data/cell.mjs";
 import {Edge} from "../data/edge.mjs";
 import * as H from "../data/helper.mjs";
 import {Node} from "../data/nodes.mjs";
-import {INNER_SEA, OPEN_SEA} from "./005.2-rivers.mjs";
-import {TERRAIN_LAND, TERRAIN_SEA} from "./004-sea-land.mjs";
+import {
+  AREA_KIND_INNER_SEA,
+  AREA_KIND_OPEN_SEA,
+  EDGE_TYPE_LAND,
+  EDGE_TYPE_RIVER,
+  MAP_FLAG_BOUNDARY,
+  MAP_FLAG_RIVER,
+  NODE_TYPE_CROSSING,
+  NODE_TYPE_RIVER,
+  NODE_TYPE_RIVER_JUNCTION,
+  RIVER_ROLE_PRIMARY,
+  RIVER_TYPE_MAIN,
+  TERRAIN_LAND,
+  TERRAIN_SEA,
+} from "../constants.mjs";
+import {drawTerrainEdge} from "./004-sea-land.mjs";
 
-const RIVER_EDGE_TYPE = "river";
-const RIVER_FLAG = "RIVER";
 const RIVER_COLOR = "var(--sea-edge)";
-const LAND_AREA_COLORS = [
-  "#F44336",
-  "#673AB7",
-  "#2196F3",
-  "#00BCD4",
-  "#009688",
-  "#CDDC39",
-  "#FFC107",
-  "#795548",
-];
-
 export function computeRiverTopology(settings, map) {
   const rivers = map.rivers ?? [];
   if (rivers.length === 0) {
@@ -58,6 +59,8 @@ export function computeRiverTopology(settings, map) {
   updateRiverReferences(map, replacements);
   map.drawOverlay = null;
   rebuildTerrainAreas(map);
+  refreshTerrainEdgeDraws(map);
+  classifyCrossingNodes(map);
   return map;
 }
 
@@ -184,7 +187,7 @@ function riverExitPoint(river, index) {
   if (!current) return null;
   if (next) return midpointBetweenCells(current, next);
 
-  const exitEdge = current.edges.find((edge) => edge.flags?.has("Boundary"));
+  const exitEdge = current.edges.find((edge) => edge.flags?.has(MAP_FLAG_BOUNDARY));
   return exitEdge ? H.midpoint(exitEdge.start, exitEdge.end) : null;
 }
 
@@ -212,7 +215,7 @@ function splitEdgeAtPoint(map, edge, point) {
     adjacentCells.map((cell) => [cell, cellTraversesEdgeForward(cell, edge)])
   );
 
-  const node = Node(`river-node-${map.nodes.length}`, point.x, point.y, "river");
+  const node = Node(`river-node-${map.nodes.length}`, point.x, point.y, NODE_TYPE_RIVER);
   map.nodes.push(node);
 
   edge.start.edges?.delete?.(edge);
@@ -246,7 +249,7 @@ function splitCellInTwo(map, cell, boundaryNodes, spec) {
   if (firstIndex < 0 || secondIndex < 0 || firstIndex === secondIndex) return [];
 
   const river = dominantRiver(spec);
-  const riverEdge = createOrGetRiverEdge(map, boundaryNodes[0], boundaryNodes[1], riverDraw(river), [RIVER_FLAG]);
+  const riverEdge = createOrGetRiverEdge(map, boundaryNodes[0], boundaryNodes[1], riverDraw(river), [MAP_FLAG_RIVER]);
   applyRiverMetadata(riverEdge, river);
 
   const firstPath = nodesBetween(nodes, firstIndex, secondIndex);
@@ -271,7 +274,7 @@ function splitCellAroundJunction(map, cell, boundaryNodes, spec) {
   for (const {node} of indexedNodes) {
     if (node === center) continue;
     const river = dominantRiverForNode(spec, node) ?? dominantRiver(spec);
-    const spoke = createOrGetRiverEdge(map, node, center, riverDraw(river), [RIVER_FLAG]);
+    const spoke = createOrGetRiverEdge(map, node, center, riverDraw(river), [MAP_FLAG_RIVER]);
     applyRiverMetadata(spoke, river);
     spokeByNode.set(node, spoke);
   }
@@ -299,12 +302,12 @@ function resolveJunctionCenter(map, cell, spec, indexedNodes) {
   if (preferredKey) {
     const directMatch = indexedNodes.find((entry) => pointKey(entry.node) === preferredKey);
     if (directMatch) {
-      directMatch.node.type = "river-junction";
+      directMatch.node.type = NODE_TYPE_RIVER_JUNCTION;
       return directMatch.node;
     }
   }
 
-  const center = Node(`river-junction-${map.nodes.length}`, H.cellCentroid(cell).x, H.cellCentroid(cell).y, "river-junction");
+  const center = Node(`river-junction-${map.nodes.length}`, H.cellCentroid(cell).x, H.cellCentroid(cell).y, NODE_TYPE_RIVER_JUNCTION);
   map.nodes.push(center);
   return center;
 }
@@ -312,7 +315,7 @@ function resolveJunctionCenter(map, cell, spec, indexedNodes) {
 function createChildCell(map, originalCell, id, boundaryPath, internalEdges) {
   const edges = [];
   for (let index = 0; index < boundaryPath.length - 1; index += 1) {
-    edges.push(createOrGetBoundaryEdge(map, boundaryPath[index], boundaryPath[index + 1], originalCell.type, null, [TERRAIN_LAND]));
+    edges.push(createOrGetBoundaryEdge(map, boundaryPath[index], boundaryPath[index + 1], EDGE_TYPE_LAND, drawTerrainEdge, [TERRAIN_LAND]));
   }
   edges.push(...internalEdges.filter(Boolean));
 
@@ -329,7 +332,7 @@ function createChildCell(map, originalCell, id, boundaryPath, internalEdges) {
 }
 
 function createOrGetBoundaryEdge(map, start, end, type, drawFn = null, flags = []) {
-  const existing = findEdgeByEndpoints(map, start, end, (edge) => edge.type !== RIVER_EDGE_TYPE);
+  const existing = findEdgeByEndpoints(map, start, end, (edge) => edge.type !== EDGE_TYPE_RIVER);
   if (existing) return existing;
 
   const edge = Edge(`${type}-edge-${map.edges.length}`, start, end, type, drawFn, flags);
@@ -337,11 +340,22 @@ function createOrGetBoundaryEdge(map, start, end, type, drawFn = null, flags = [
   return edge;
 }
 
+function classifyCrossingNodes(map) {
+  for (const node of map.nodes ?? []) {
+    const edges = [...(node.edges ?? [])];
+    const touchesRiver = edges.some((edge) => edge.type === EDGE_TYPE_RIVER);
+    const touchesLand = edges.some((edge) => edge.type === EDGE_TYPE_LAND);
+    if (touchesRiver && touchesLand) {
+      node.type = NODE_TYPE_CROSSING;
+    }
+  }
+}
+
 function createOrGetRiverEdge(map, start, end, drawFn = null, flags = []) {
-  const existing = findEdgeByEndpoints(map, start, end, (edge) => edge.type === RIVER_EDGE_TYPE);
+  const existing = findEdgeByEndpoints(map, start, end, (edge) => edge.type === EDGE_TYPE_RIVER);
   if (existing) return existing;
 
-  const edge = Edge(`${RIVER_EDGE_TYPE}-edge-${map.edges.length}`, start, end, RIVER_EDGE_TYPE, drawFn, flags);
+  const edge = Edge(`${EDGE_TYPE_RIVER}-edge-${map.edges.length}`, start, end, EDGE_TYPE_RIVER, drawFn, flags);
   map.edges.push(edge);
   return edge;
 }
@@ -382,7 +396,7 @@ function updateRiverReferences(map, replacements) {
         riverCell: remapCellReference(map, replacements, river.mouth.riverCell),
       };
     }
-    river.topologyEdges = map.edges.filter((edge) => edge.type === RIVER_EDGE_TYPE && edge.riverId === river.id);
+    river.topologyEdges = map.edges.filter((edge) => edge.type === EDGE_TYPE_RIVER && edge.riverId === river.id);
   }
 }
 
@@ -395,10 +409,10 @@ function rebuildTerrainAreas(map) {
   const seaAreas = connectedComponents(
     map.cells.filter((cell) => cell.type === TERRAIN_SEA),
     (cell) => typedNeighbors(cell, TERRAIN_SEA)
-      .filter(({edge}) => edge.type !== RIVER_EDGE_TYPE)
+      .filter(({edge}) => edge.type !== EDGE_TYPE_RIVER)
   ).map((cells, index) => {
-    const kind = cells.some(touchesBoundary) ? OPEN_SEA : INNER_SEA;
-    const area = Area(`${kind === OPEN_SEA ? "open-sea" : "inner-sea"}-${index}`, TERRAIN_SEA, cells);
+    const kind = cells.some(touchesBoundary) ? AREA_KIND_OPEN_SEA : AREA_KIND_INNER_SEA;
+    const area = Area(`${kind === AREA_KIND_OPEN_SEA ? "open-sea" : "inner-sea"}-${index}`, TERRAIN_SEA, cells);
     area.kind = kind;
     return area;
   });
@@ -408,51 +422,19 @@ function rebuildTerrainAreas(map) {
     landAreaNeighbors
   ).map((cells, index) => Area(`land-${index}`, TERRAIN_LAND, cells));
 
-  assignLandAreaColors(landAreas);
   map.areas = [AreaGroup("terrain", [...seaAreas, ...landAreas])];
 }
 
-function assignLandAreaColors(areas) {
-  const adjacency = new globalThis.Map(areas.map((area) => [area, new Set()]));
-  const areaByCell = new globalThis.Map();
-  areas.forEach((area) => area.cells.forEach((cell) => areaByCell.set(cell, area)));
-
-  for (const area of areas) {
-    for (const cell of area.cells) {
-      for (const {cell: neighbor} of typedNeighbors(cell, TERRAIN_LAND)) {
-        const neighborArea = areaByCell.get(neighbor);
-        if (!neighborArea || neighborArea === area) continue;
-        adjacency.get(area).add(neighborArea);
-      }
-    }
+function refreshTerrainEdgeDraws(map) {
+  for (const edge of map.edges ?? []) {
+    if (edge.type === EDGE_TYPE_RIVER) continue;
+    edge.draw = drawTerrainEdge;
   }
-
-  const assigned = new Set();
-  for (const area of [...areas].sort((a, b) => a.name.localeCompare(b.name))) {
-    const neighboringColors = new Set([...adjacency.get(area)].map((neighbor) => neighbor.tint).filter(Boolean));
-    area.tint = chooseAreaColor(neighboringColors, assigned, adjacency.get(area));
-    area.tintOpacity = 0.2;
-    assigned.add(area.tint);
-  }
-}
-
-function chooseAreaColor(neighboringColors, assigned, neighbors) {
-  const unusedAvailable = LAND_AREA_COLORS.find((color) => !neighboringColors.has(color) && !assigned.has(color));
-  if (unusedAvailable) return unusedAvailable;
-
-  const available = LAND_AREA_COLORS.find((color) => !neighboringColors.has(color));
-  if (available) return available;
-
-  return [...LAND_AREA_COLORS].sort((a, b) => {
-    const aConflicts = [...neighbors].filter((area) => area.tint === a).length;
-    const bConflicts = [...neighbors].filter((area) => area.tint === b).length;
-    return aConflicts - bConflicts || LAND_AREA_COLORS.indexOf(a) - LAND_AREA_COLORS.indexOf(b);
-  })[0];
 }
 
 function landAreaNeighbors(cell) {
   return typedNeighbors(cell, TERRAIN_LAND)
-    .filter(({edge}) => edge.type !== RIVER_EDGE_TYPE);
+    .filter(({edge}) => edge.type !== EDGE_TYPE_RIVER);
 }
 
 function typedNeighbors(cell, type) {
@@ -549,15 +531,15 @@ function compareRivers(a, b) {
 }
 
 function applyRiverMetadata(edge, river) {
-  edge.type = RIVER_EDGE_TYPE;
+  edge.type = EDGE_TYPE_RIVER;
   edge.flags = ensureSet(edge.flags);
-  edge.flags.add(RIVER_FLAG);
+  edge.flags.add(MAP_FLAG_RIVER);
   edge.riverId = river?.id ?? null;
   edge.riverRole = river?.role ?? river?.type ?? null;
 }
 
 function riverDraw(river) {
-  const width = river?.role === "PRIMARY" || river?.type === "MAIN" ? 12 : 8;
+  const width = river?.role === RIVER_ROLE_PRIMARY || river?.type === RIVER_TYPE_MAIN ? 12 : 8;
   return function drawRiverEdge(svg) {
     const layer = svg.getElementById("edges");
     if (!layer) return;
@@ -576,7 +558,7 @@ function ensureSet(value) {
 }
 
 function touchesBoundary(cell) {
-  return cell.edges.some((edge) => edge.flags?.has("Boundary"));
+  return cell.edges.some((edge) => edge.flags?.has(MAP_FLAG_BOUNDARY));
 }
 
 function pointOnEdge(point, edge) {

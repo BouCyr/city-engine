@@ -1,4 +1,5 @@
 import {Node} from "../data/nodes.mjs";
+import {MAP_FLAG_BOUNDARY} from "../constants.mjs";
 
 const EPSILON = 1e-7;
 
@@ -126,7 +127,7 @@ function mergeFlags(firstNode, secondNode, isBoundary) {
     }
   }
 
-  if (isBoundary) merged.add("Boundary");
+  if (isBoundary) merged.add(MAP_FLAG_BOUNDARY);
   return [...merged];
 }
 

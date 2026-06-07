@@ -2,11 +2,17 @@ import {cloneDeepKeepFunctions} from "../data/clone.mjs";
 import {Edge} from "../data/edge.mjs";
 import * as H from "../data/helper.mjs";
 import {Node} from "../data/nodes.mjs";
-import {TERRAIN_COAST, TERRAIN_SEA} from "./004-sea-land.mjs";
+import {
+  EDGE_TYPE_COAST,
+  EDGE_TYPE_SEA,
+  MAP_FLAG_BOUNDARY,
+  MAP_FLAG_COAST_GAP,
+  MAP_FLAG_FIXED,
+  NODE_TYPE_COAST,
+  OVERLAY_TYPE_RIVERS,
+  TERRAIN_COAST,
+} from "../constants.mjs";
 
-export const COAST_EDGE_TYPE = "coast";
-export const COAST_GAP_FLAG = "COAST_GAP";
-export const FIXED_FLAG = "FIXED";
 export const TARGET_COAST_SEGMENT_LENGTH = 10;
 
 const FIXED_COLOR = "#ef4444";
@@ -106,8 +112,8 @@ function createSmoothCoastContext(map) {
 
 function refreshCoastEdges(map) {
   for (const edge of map.edges) {
-    if (edge.flags?.has(TERRAIN_COAST)) {
-      edge.type = COAST_EDGE_TYPE;
+    if (edge.type === EDGE_TYPE_COAST || edge.flags?.has(TERRAIN_COAST)) {
+      edge.type = EDGE_TYPE_COAST;
       setTerrainEdgeDraw(edge);
     }
   }
@@ -121,9 +127,9 @@ function setTerrainEdgeDraw(edge) {
     const target = this;
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", `M ${target.start.x} ${target.start.y} L ${target.end.x} ${target.end.y}`);
-    if (target.flags?.has(TERRAIN_SEA)) {
+    if (target.type === EDGE_TYPE_SEA) {
       path.setAttribute("class", "edge terrain-sea");
-    } else if (target.flags?.has(TERRAIN_COAST)) {
+    } else if (target.type === EDGE_TYPE_COAST) {
       path.setAttribute("class", "edge terrain-coast");
     } else {
       path.setAttribute("class", "edge terrain-land");
@@ -152,7 +158,7 @@ function sampleCoastEdges(context) {
 }
 
 function createFixedNode(map, edge, point) {
-  const node = Node(`coast-fixed-${map.nodes.length}`, point.x, point.y, "coast", null, [FIXED_FLAG]);
+  const node = Node(`coast-fixed-${map.nodes.length}`, point.x, point.y, NODE_TYPE_COAST, null, [MAP_FLAG_FIXED]);
   node.smoothCoastGenerated = true;
   node.smoothCoastSourceEdgeId = edge.id;
   map.nodes.push(node);
@@ -170,7 +176,7 @@ function sampleSegment(context, sourceEdge) {
       `coast-sample-${context.map.nodes.length}`,
       sourceEdge.start.x + (sourceEdge.end.x - sourceEdge.start.x) * t,
       sourceEdge.start.y + (sourceEdge.end.y - sourceEdge.start.y) * t,
-      "coast"
+      NODE_TYPE_COAST
     );
     node.smoothCoastGenerated = true;
     node.smoothCoastSourceEdgeId = sourceEdge.id;
@@ -188,7 +194,7 @@ function sampleSegment(context, sourceEdge) {
 }
 
 function createSampleEdge(sourceEdge, start, end, key) {
-  const edge = Edge(`${sourceEdge.id}-smooth-${key}`, start, end, COAST_EDGE_TYPE, null, [...(sourceEdge.flags ?? [])]);
+  const edge = Edge(`${sourceEdge.id}-smooth-${key}`, start, end, sourceEdge.type, null, [...(sourceEdge.flags ?? [])]);
   setTerrainEdgeDraw(edge);
   edge.leftCell = sourceEdge.leftCell;
   edge.rightCell = sourceEdge.rightCell;
@@ -229,7 +235,7 @@ function planBezierMoves(map) {
 
     for (let index = 1; index < path.nodes.length - 1; index += 1) {
       const node = path.nodes[index];
-      if (node.flags?.has(FIXED_FLAG)) continue;
+      if (node.flags?.has(MAP_FLAG_FIXED)) continue;
       moves.push({
         node,
         from: {x: node.x, y: node.y},
@@ -265,13 +271,13 @@ function buildAdjacency(edges) {
 function collectFixedNodePaths(adjacency) {
   const paths = [];
   const visitedEdges = new Set();
-  const fixedNodes = [...adjacency.keys()].filter(node => node.flags?.has(FIXED_FLAG)).sort(compareNodes);
+  const fixedNodes = [...adjacency.keys()].filter(node => node.flags?.has(MAP_FLAG_FIXED)).sort(compareNodes);
 
   for (const start of fixedNodes) {
     for (const neighbor of [...(adjacency.get(start) ?? [])].sort(compareAdjacencyEntries)) {
       if (visitedEdges.has(neighbor.edge)) continue;
       const path = walkToFixedNode(start, neighbor, adjacency, visitedEdges);
-      if (path.nodes.at(-1)?.flags?.has(FIXED_FLAG)) paths.push(path);
+      if (path.nodes.at(-1)?.flags?.has(MAP_FLAG_FIXED)) paths.push(path);
     }
   }
   return paths;
@@ -284,7 +290,7 @@ function walkToFixedNode(start, first, adjacency, visitedEdges) {
   let previous = start;
   let current = first.node;
 
-  while (!current.flags?.has(FIXED_FLAG)) {
+  while (!current.flags?.has(MAP_FLAG_FIXED)) {
     const next = (adjacency.get(current) ?? [])
       .filter(entry => entry.node !== previous)
       .sort(compareAdjacencyEntries)[0];
@@ -299,8 +305,8 @@ function walkToFixedNode(start, first, adjacency, visitedEdges) {
 }
 
 function isSmoothableCoastEdge(edge) {
-  return (edge.type === COAST_EDGE_TYPE || edge.flags?.has(TERRAIN_COAST))
-    && !edge.flags?.has("Boundary");
+  return (edge.type === EDGE_TYPE_COAST || edge.flags?.has(TERRAIN_COAST))
+    && !edge.flags?.has(MAP_FLAG_BOUNDARY);
 }
 
 function compareEdges(a, b) {
@@ -350,12 +356,12 @@ function replayFrame(map, label, text, overlay) {
 }
 
 function emptyCoastOverlay() {
-  return {type: "rivers", polygons: [], arrows: [], lines: [], paths: [], points: []};
+  return {type: OVERLAY_TYPE_RIVERS, polygons: [], arrows: [], lines: [], paths: [], points: []};
 }
 
 function cloneOverlay(overlay) {
   return {
-    type: "rivers",
+    type: OVERLAY_TYPE_RIVERS,
     polygons: (overlay.polygons ?? []).map(polygon => ({...polygon, points: (polygon.points ?? []).map(point => ({...point}))})),
     arrows: (overlay.arrows ?? []).map(arrow => ({...arrow})),
     lines: (overlay.lines ?? []).map(line => ({...line})),

@@ -3,10 +3,10 @@ import {cloneDeepKeepFunctions} from "../data/clone.mjs";
 import {Edge} from "../data/edge.mjs";
 import {Map as CityMap} from "../data/map.mjs";
 import {Node} from "../data/nodes.mjs";
+import {EDGE_TYPE_VORONOI, MAP_FLAG_BOUNDARY, NODE_TYPE_POI, NODE_TYPE_VORONOI, OVERLAY_TYPE_GATHER} from "../constants.mjs";
 
 const EPSILON = 1e-7;
 const KEY_PRECISION = 1000000;
-const BOUNDARY = "Boundary";
 const OVERLAY_COMPETITOR_LIMIT = 6;
 
 export function cells(settings, map) {
@@ -42,7 +42,7 @@ export function createReplay(settings, inputMap) {
 }
 
 function buildGather(settings, map, afterCell) {
-  const sites = map.nodes.filter(node => node.type === "POI");
+  const sites = map.nodes.filter(node => node.type === NODE_TYPE_POI);
   const siteCells = buildSiteCells(sites, settings.size);
   const result = new CityMap(settings);
   const nodeIndex = new Map();
@@ -174,8 +174,8 @@ function getOrCreateNode(map, nodeIndex, point) {
   const key = pointKey(point);
   let node = nodeIndex.get(key);
   if (!node) {
-    const flags = isBoundaryPoint(point, map.size) ? [BOUNDARY] : [];
-    node = Node(`V${nodeIndex.size}`, clamp(point.x, map.size), clamp(point.y, map.size), "Voronoi", null, flags);
+    const flags = isBoundaryPoint(point, map.size) ? [MAP_FLAG_BOUNDARY] : [];
+    node = Node(`V${nodeIndex.size}`, clamp(point.x, map.size), clamp(point.y, map.size), NODE_TYPE_VORONOI, null, flags);
     nodeIndex.set(key, node);
     map.nodes.push(node);
   }
@@ -186,8 +186,8 @@ function getOrCreateEdge(map, edgeIndex, start, end) {
   const key = edgeKey(start, end);
   let edge = edgeIndex.get(key);
   if (!edge) {
-    const flags = isBoundaryEdge(start, end, map.size) ? [BOUNDARY] : [];
-    edge = Edge(`E${edgeIndex.size}`, start, end, "Voronoi", null, flags);
+    const flags = isBoundaryEdge(start, end, map.size) ? [MAP_FLAG_BOUNDARY] : [];
+    edge = Edge(`E${edgeIndex.size}`, start, end, EDGE_TYPE_VORONOI, null, flags);
     edgeIndex.set(key, edge);
     map.edges.push(edge);
   }
@@ -248,7 +248,7 @@ function clamp(value, size) {
 
 function createGatherOverlaySpec({size, site, sites, polygon}) {
   return {
-    type: "gather",
+    type: OVERLAY_TYPE_GATHER,
     size,
     site: plainPoint(site),
     sites: sites.map(plainPoint),

@@ -1,7 +1,9 @@
+import {CELL_TYPE_CELL} from "../constants.mjs";
+
 export function Cell(id, edges, fill, drawFn = null, flags = []) {
   return {
     id: id,
-    type: "Cell",
+    type: CELL_TYPE_CELL,
     edges: edges,
     flags: new Set(flags),
     fill: fill,

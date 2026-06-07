@@ -3,17 +3,24 @@ import {cloneDeepKeepFunctions} from "../data/clone.mjs";
 import {createDrawEdgeFn} from "../data/edge.mjs";
 import * as H from "../data/helper.mjs";
 import {Settings} from "../data/settings.mjs";
+import {
+  AREA_KIND_INNER_SEA,
+  AREA_KIND_OPEN_SEA,
+  MAP_FLAG_BOUNDARY,
+  OVERLAY_TYPE_RIVERS,
+  RIVER_ROLE_FIRST_TRIBUTARY,
+  RIVER_ROLE_PRIMARY,
+  RIVER_ROLE_SECOND_TRIBUTARY,
+  RIVER_TYPE_MAIN,
+  TERRAIN_LAND,
+  TERRAIN_SEA,
+} from "../constants.mjs";
 
 const DEFAULT_RIVER_SETTINGS = new Settings().rivers;
 const RIVER_COLOR = "var(--sea-edge)";
-const RIVER_ROLE_PRIMARY = "PRIMARY";
-const RIVER_ROLE_FIRST_TRIBUTARY = "FIRST_TRIBUTARY";
-const RIVER_ROLE_SECOND_TRIBUTARY = "SECOND_TRIBUTARY";
 
 export const MIN_EDGE_SIZE = DEFAULT_RIVER_SETTINGS.minEdgeSize;
 
-export const OPEN_SEA = "OPEN_SEA";
-export const INNER_SEA = "INNER_SEA";
 export const MIN_EXIT_OPEN_SEA_DISTANCE = DEFAULT_RIVER_SETTINGS.minExitOpenSeaDistance;
 export const MIN_LOCKED_SEA_DISTANCE = DEFAULT_RIVER_SETTINGS.minLockedSeaDistance;
 
@@ -32,7 +39,7 @@ export function computeRivers(settings, map) {
   }
   console.info(`Rivers A*: found ${seaComponents.length} sea components`);
 
-  const landComponents = connectedComponents(map.cells.filter(cell => cell.type === "LAND"), landNeighbors);
+  const landComponents = connectedComponents(map.cells.filter(cell => cell.type === TERRAIN_LAND), landNeighbors);
   console.info(`Rivers A*: found ${landComponents.length} land components`);
   const selectedLandmass = largestComponent(landComponents);
   if (selectedLandmass.length === 0) {
@@ -41,7 +48,7 @@ export function computeRivers(settings, map) {
   }
 
   const selectedLandSet = new Set(selectedLandmass);
-  const openSeaComponents = seaComponents.filter(component => component.kind === OPEN_SEA);
+  const openSeaComponents = seaComponents.filter(component => component.kind === AREA_KIND_OPEN_SEA);
   if (openSeaComponents.length === 0) {
     console.info("Rivers A*: no open sea found");
     return map;
@@ -54,7 +61,7 @@ export function computeRivers(settings, map) {
 
   const exitCells = selectedLandmass
     .filter(cell => cell.seaD >= riverSettings.minExitOpenSeaDistance)
-    .filter(cell => cell.edges.some(edge => edge.flags?.has("Boundary")));
+    .filter(cell => cell.edges.some(edge => edge.flags?.has(MAP_FLAG_BOUNDARY)));
   if (exitCells.length === 0) {
     console.info("Rivers A*: no eligible exit cells found");
     return map;
@@ -64,7 +71,7 @@ export function computeRivers(settings, map) {
   const mouthCandidates = findMouthCandidates(map, seaComponents)
     .filter(mouth => selectedLandSet.has(mouth.cell));
   const openMouths = mouthCandidates
-    .filter(mouth => mouth.seaComponent?.kind === OPEN_SEA);
+    .filter(mouth => mouth.seaComponent?.kind === AREA_KIND_OPEN_SEA);
   console.info(`Rivers A*: found ${mouthCandidates.length} mouth candidates`);
   if (openMouths.length === 0) {
     console.info("Rivers A*: no open-sea mouth candidates found");
@@ -95,7 +102,7 @@ export function computeRivers(settings, map) {
     selectedLandSet,
     riverSettings,
   });
-  const selectedRiver = normalizeRiver(meanderedRiver, {type: "MAIN", id: "river-0", order: 0, role: RIVER_ROLE_PRIMARY});
+  const selectedRiver = normalizeRiver(meanderedRiver, {type: RIVER_TYPE_MAIN, id: "river-0", order: 0, role: RIVER_ROLE_PRIMARY});
   map.rivers = [selectedRiver];
   console.info(`Rivers A*: selected ${formatRiver(selectedRiver)}`);
   drawRivers(map.rivers, map, RIVER_COLOR);
@@ -110,10 +117,10 @@ export function createReplay(settings, inputMap) {
   clearRiverState(map);
 
   const seaComponents = classifySeaComponents(map);
-  const landComponents = connectedComponents(map.cells.filter(cell => cell.type === "LAND"), landNeighbors);
+  const landComponents = connectedComponents(map.cells.filter(cell => cell.type === TERRAIN_LAND), landNeighbors);
   const selectedLandmass = largestComponent(landComponents);
   const selectedLandSet = new Set(selectedLandmass);
-  const openSeaComponents = seaComponents.filter(component => component.kind === OPEN_SEA);
+  const openSeaComponents = seaComponents.filter(component => component.kind === AREA_KIND_OPEN_SEA);
 
   if (seaComponents.length === 0 || selectedLandmass.length === 0 || openSeaComponents.length === 0) {
     return {frames: [{label: "Before rivers", text: "Rivers cannot be replayed without sea and land cells.", map}]};
@@ -123,11 +130,11 @@ export function createReplay(settings, inputMap) {
 
   const exitCells = selectedLandmass
     .filter(cell => cell.seaD >= riverSettings.minExitOpenSeaDistance)
-    .filter(cell => cell.edges.some(edge => edge.flags?.has("Boundary")));
+    .filter(cell => cell.edges.some(edge => edge.flags?.has(MAP_FLAG_BOUNDARY)));
   const mouthCandidates = findMouthCandidates(map, seaComponents)
     .filter(mouth => selectedLandSet.has(mouth.cell));
   const openMouths = mouthCandidates
-    .filter(mouth => mouth.seaComponent?.kind === OPEN_SEA);
+    .filter(mouth => mouth.seaComponent?.kind === AREA_KIND_OPEN_SEA);
   const attempts = collectReplayRiverAttempts({
     openMouths,
     exitCells,
@@ -244,7 +251,7 @@ function replayFrame(map, label, text, overlay) {
 
 function emptyRiverReplayOverlaySpec() {
   return {
-    type: "rivers",
+    type: OVERLAY_TYPE_RIVERS,
     polygons: [],
     arrows: [],
     lines: [],
@@ -254,7 +261,7 @@ function emptyRiverReplayOverlaySpec() {
 
 function cloneRiverReplayOverlaySpec(overlay) {
   return {
-    type: "rivers",
+    type: OVERLAY_TYPE_RIVERS,
     polygons: (overlay.polygons ?? []).map(polygon => ({...polygon, points: (polygon.points ?? []).map(point => ({...point}))})),
     arrows: (overlay.arrows ?? []).map(arrow => ({...arrow})),
     lines: (overlay.lines ?? []).map(line => ({...line})),
@@ -284,7 +291,7 @@ function appendRiverReplayOverlay(overlay, {lowSeaDCells = [], mouths = [], exit
 
   overlay.arrows.push(...exits.map(exit => {
     const start = H.cellCentroid(exit);
-    const edge = exit.edges.find(candidate => candidate.flags?.has("Boundary"));
+    const edge = exit.edges.find(candidate => candidate.flags?.has(MAP_FLAG_BOUNDARY));
     const end = edge ? H.midpoint(edge.start, edge.end) : start;
     return {
       x1: start.x,
@@ -403,7 +410,7 @@ function replayArrowHead({x1, y1, x2, y2}) {
 
 function forbiddenRiverEdges(map, riverSettings = DEFAULT_RIVER_SETTINGS) {
   return map.edges
-    .filter(edge => edge.flags?.has("LAND"))
+    .filter(edge => edge.flags?.has(TERRAIN_LAND))
     .filter(edge => H.edgeLength(edge) <= riverSettings.minEdgeSize);
 }
 
@@ -527,8 +534,8 @@ function clearRiverState(map) {
     delete cell.cellToSea;
     delete cell.seaKind;
     delete cell.seaComponent;
-    cell.flags?.delete?.(OPEN_SEA);
-    cell.flags?.delete?.(INNER_SEA);
+    cell.flags?.delete?.(AREA_KIND_OPEN_SEA);
+    cell.flags?.delete?.(AREA_KIND_INNER_SEA);
   }
   map.areas = (map.areas ?? []).filter(group => group.name !== "river-banks");
   map.rivers = [];
@@ -536,7 +543,7 @@ function clearRiverState(map) {
 
 function flagShortEdges(map) {
   map.edges
-    .filter(edge => edge.flags?.has("LAND"))
+    .filter(edge => edge.flags?.has(TERRAIN_LAND))
     .filter(edge => H.edgeLength(edge) <= MIN_EDGE_SIZE)
     .forEach(edge => {
       edge.draw = createDrawEdgeFn(edge, "none", "red", "7");
@@ -544,12 +551,12 @@ function flagShortEdges(map) {
 }
 
 export function classifySeaComponents(map) {
-  const seaComponents = connectedComponents(map.cells.filter(cell => cell.type === "SEA"), seaNeighbors);
+  const seaComponents = connectedComponents(map.cells.filter(cell => cell.type === TERRAIN_SEA), seaNeighbors);
   seaComponents.forEach((cells, index) => {
     const component = {
       id: `sea-${index}`,
       cells,
-      kind: cells.some(touchesBoundary) ? OPEN_SEA : INNER_SEA,
+      kind: cells.some(touchesBoundary) ? AREA_KIND_OPEN_SEA : AREA_KIND_INNER_SEA,
     };
     cells.forEach(cell => {
       cell.seaKind = component.kind;
@@ -564,7 +571,7 @@ export function computeDistanceFromSea(selectedLandmass, selectedLandSet, seaCom
   const starts = [];
   for (const component of seaComponents) {
     for (const seaCell of component.cells) {
-      for (const {cell: landCell} of typedNeighbors(seaCell, "LAND")) {
+      for (const {cell: landCell} of typedNeighbors(seaCell, TERRAIN_LAND)) {
         if (!selectedLandSet.has(landCell) || landCell.seaD !== undefined) continue;
         landCell.seaD = 1;
         landCell.cellToSea = 1;
@@ -590,16 +597,16 @@ export function findMouthCandidates(map, seaComponents) {
   });
 
   const seaMouthCandidates = map.cells
-    .filter(cell => cell.type === "SEA")
-    .filter(cell => typedNeighbors(cell, "LAND").length > 2);
+    .filter(cell => cell.type === TERRAIN_SEA)
+    .filter(cell => typedNeighbors(cell, TERRAIN_LAND).length > 2);
 
   const mouths = [];
   const seen = new Set();
   for (const seaCell of seaMouthCandidates) {
     const seaComponent = seaComponentByCell.get(seaCell);
-    for (const {cell: landCell, edge} of typedNeighbors(seaCell, "LAND")) {
+    for (const {cell: landCell, edge} of typedNeighbors(seaCell, TERRAIN_LAND)) {
       if (H.edgeLength(edge) < MIN_EDGE_SIZE) continue;
-      const seaNeighbors = typedNeighbors(landCell, "SEA").map(neighbor => neighbor.cell);
+      const seaNeighbors = typedNeighbors(landCell, TERRAIN_SEA).map(neighbor => neighbor.cell);
       if (seaNeighbors.length !== 1 || seaNeighbors[0] !== seaCell) continue;
       const key = `${landCell.id}:${seaCell.id}`;
       if (seen.has(key)) continue;
@@ -897,13 +904,13 @@ function riverEntryPoint(candidate) {
     return firstRiverEdge ? H.midpoint(firstRiverEdge.start, firstRiverEdge.end) : null;
   }
 
-  const firstSea = typedNeighbors(firstMouth, "SEA")[0]?.cell;
+  const firstSea = typedNeighbors(firstMouth, TERRAIN_SEA)[0]?.cell;
   const firstMouthEdge = H.cellsEdge(firstSea, firstMouth);
   return firstMouthEdge ? H.midpoint(firstMouthEdge.start, firstMouthEdge.end) : null;
 }
 
 function riverExitPoint(candidate) {
-  const exitEdge = candidate.riverCells.at(-1)?.edges.find(edge => edge.flags?.has("Boundary"));
+  const exitEdge = candidate.riverCells.at(-1)?.edges.find(edge => edge.flags?.has(MAP_FLAG_BOUNDARY));
   return exitEdge ? H.midpoint(exitEdge.start, exitEdge.end) : null;
 }
 
@@ -981,11 +988,11 @@ function normalizeMeanderRadii(value) {
 }
 
 export function landNeighbors(cell) {
-  return typedNeighbors(cell, "LAND");
+  return typedNeighbors(cell, TERRAIN_LAND);
 }
 
 function seaNeighbors(cell) {
-  return typedNeighbors(cell, "SEA");
+  return typedNeighbors(cell, TERRAIN_SEA);
 }
 
 export function typedNeighbors(cell, type) {
@@ -1002,7 +1009,7 @@ function otherSide(edge, cell) {
 }
 
 export function touchesBoundary(cell) {
-  return cell.edges.some(edge => edge.flags?.has("Boundary"));
+  return cell.edges.some(edge => edge.flags?.has(MAP_FLAG_BOUNDARY));
 }
 
 export function largestComponent(components) {
@@ -1046,7 +1053,7 @@ export function riverKey(candidate) {
   return candidate.riverCells.map(cell => cell.id).join("|");
 }
 
-export function normalizeRiver(candidate, {type = "MAIN", id = "river-0", order = 0, sourceRiverId = null, role = null} = {}) {
+export function normalizeRiver(candidate, {type = RIVER_TYPE_MAIN, id = "river-0", order = 0, sourceRiverId = null, role = null} = {}) {
   return {
     ...candidate,
     id,
@@ -1059,7 +1066,7 @@ export function normalizeRiver(candidate, {type = "MAIN", id = "river-0", order 
 }
 
 function inferRiverRole(type, order) {
-  if (type === "MAIN") return RIVER_ROLE_PRIMARY;
+  if (type === RIVER_TYPE_MAIN) return RIVER_ROLE_PRIMARY;
   if (order === 1) return RIVER_ROLE_FIRST_TRIBUTARY;
   if (order === 2) return RIVER_ROLE_SECOND_TRIBUTARY;
   return RIVER_ROLE_SECOND_TRIBUTARY;
@@ -1073,7 +1080,7 @@ function riverStrokeWidth(candidate) {
     case RIVER_ROLE_SECOND_TRIBUTARY:
       return 8;
     default:
-      return candidate?.type === "MAIN" ? 12 : 8;
+      return candidate?.type === RIVER_TYPE_MAIN ? 12 : 8;
   }
 }
 

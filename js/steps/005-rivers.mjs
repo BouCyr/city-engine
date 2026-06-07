@@ -2,10 +2,15 @@ import {Area, AreaGroup} from "../data/area.mjs";
 import {createDrawCellFn} from "../data/cell.mjs";
 import {createDrawEdgeFn} from "../data/edge.mjs";
 import * as H from "../data/helper.mjs";
+import {
+  AREA_KIND_INNER_SEA,
+  AREA_KIND_OPEN_SEA,
+  MAP_FLAG_BOUNDARY,
+  TERRAIN_LAND,
+  TERRAIN_SEA,
+} from "../constants.mjs";
 
 export const MIN_EDGE_SIZE = 50;
-const OPEN_SEA = "OPEN_SEA";
-const INNER_SEA = "INNER_SEA";
 const MAX_CANDIDATE_STATES = 5000;
 const MAX_COMPUTE_MS = 1000;
 const MIN_EXIT_OPEN_SEA_DISTANCE = 5;
@@ -28,7 +33,7 @@ export function computeRivers(settings, map) {
   }
   console.info(`Rivers: found ${seaComponents.length} sea components`);
 
-  const landComponents = connectedComponents(map.cells.filter(cell => cell.type === "LAND"), landNeighbors);
+  const landComponents = connectedComponents(map.cells.filter(cell => cell.type === TERRAIN_LAND), landNeighbors);
   console.info(`Rivers: found ${landComponents.length} land components`);
   const selectedLandmass = largestComponent(landComponents);
   if (selectedLandmass.length === 0) {
@@ -37,7 +42,7 @@ export function computeRivers(settings, map) {
   }
 
   const selectedLandSet = new Set(selectedLandmass);
-  const openSeaComponents = seaComponents.filter(component => component.kind === OPEN_SEA);
+  const openSeaComponents = seaComponents.filter(component => component.kind === AREA_KIND_OPEN_SEA);
 
   if(openSeaComponents.length === 0) {
     console.info("Rivers: no open sea found");
@@ -45,7 +50,7 @@ export function computeRivers(settings, map) {
   }
 
   console.info(`Rivers: found ${openSeaComponents.length} open sea components`);
-  const innerSeaComponents = seaComponents.filter(component => component.kind === INNER_SEA);
+  const innerSeaComponents = seaComponents.filter(component => component.kind === AREA_KIND_INNER_SEA);
   console.info(`Rivers: found ${innerSeaComponents.length} inner sea components`);
   computeDistanceFromOpenSea(selectedLandmass, selectedLandSet, openSeaComponents);
 
@@ -53,7 +58,7 @@ export function computeRivers(settings, map) {
 
   const exitCells = selectedLandmass
     .filter(cell => cell.seaD >= MIN_EXIT_OPEN_SEA_DISTANCE)
-    .filter(cell => cell.edges.some(edge => edge.flags?.has("Boundary")));
+    .filter(cell => cell.edges.some(edge => edge.flags?.has(MAP_FLAG_BOUNDARY)));
   if (exitCells.length === 0) {
     console.info("Rivers: no eligible exit cells found");
     return map;
@@ -64,7 +69,7 @@ export function computeRivers(settings, map) {
   const mouthCandidates = findMouthCandidates(map, seaComponents)
     .filter(mouth => selectedLandSet.has(mouth.cell));
   const openMouths = mouthCandidates
-    .filter(mouth => mouth.seaComponent?.kind === OPEN_SEA)
+    .filter(mouth => mouth.seaComponent?.kind === AREA_KIND_OPEN_SEA)
     .sort((a, b) => compareMouthsByCenter(a, b, map.size));
   console.info(`Rivers: found ${mouthCandidates.length} mouth candidates`);
   if (openMouths.length === 0) {
@@ -121,15 +126,15 @@ function clearRiverState(map) {
     delete cell.cellToSea;
     delete cell.seaKind;
     delete cell.seaComponent;
-    cell.flags?.delete?.(OPEN_SEA);
-    cell.flags?.delete?.(INNER_SEA);
+    cell.flags?.delete?.(AREA_KIND_OPEN_SEA);
+    cell.flags?.delete?.(AREA_KIND_INNER_SEA);
   }
   map.areas = (map.areas ?? []).filter(group => group.name !== "river-banks");
 }
 
 function flagShortEdges(map) {
   map.edges
-    .filter(edge => edge.flags?.has("LAND"))
+    .filter(edge => edge.flags?.has(TERRAIN_LAND))
     .filter(edge => H.edgeLength(edge) <= MIN_EDGE_SIZE)
     .forEach(edge => {
       edge.draw = createDrawEdgeFn(edge, "none", "red", "7")
@@ -137,12 +142,12 @@ function flagShortEdges(map) {
 }
 
 function classifySeaComponents(map) {
-  const seaComponents = connectedComponents(map.cells.filter(cell => cell.type === "SEA"), seaNeighbors);
+  const seaComponents = connectedComponents(map.cells.filter(cell => cell.type === TERRAIN_SEA), seaNeighbors);
   seaComponents.forEach((cells, index) => {
     const component = {
       id: `sea-${index}`,
       cells,
-      kind: cells.some(touchesBoundary) ? OPEN_SEA : INNER_SEA,
+      kind: cells.some(touchesBoundary) ? AREA_KIND_OPEN_SEA : AREA_KIND_INNER_SEA,
     };
     cells.forEach(cell => {
       cell.seaKind = component.kind;
@@ -157,7 +162,7 @@ function computeDistanceFromOpenSea(selectedLandmass, selectedLandSet, openSeaCo
   const starts = [];
   for (const component of openSeaComponents) {
     for (const seaCell of component.cells) {
-      for (const {cell: landCell} of typedNeighbors(seaCell, "LAND")) {
+      for (const {cell: landCell} of typedNeighbors(seaCell, TERRAIN_LAND)) {
         if (!selectedLandSet.has(landCell) || landCell.seaD !== undefined) continue;
         landCell.seaD = 1;
         landCell.cellToSea = 1;
@@ -183,15 +188,15 @@ function findMouthCandidates(map, seaComponents) {
   });
 
   const seaMouthCandidates = map.cells
-    .filter(cell => cell.type === "SEA")
-    .filter(cell => typedNeighbors(cell, "LAND").length > 2);
+    .filter(cell => cell.type === TERRAIN_SEA)
+    .filter(cell => typedNeighbors(cell, TERRAIN_LAND).length > 2);
 
   const mouths = [];
   const seen = new Set();
   for (const seaCell of seaMouthCandidates) {
     const seaComponent = seaComponentByCell.get(seaCell);
-    for (const {cell: landCell} of typedNeighbors(seaCell, "LAND")) {
-      const seaNeighbors = typedNeighbors(landCell, "SEA").map(neighbor => neighbor.cell);
+    for (const {cell: landCell} of typedNeighbors(seaCell, TERRAIN_LAND)) {
+      const seaNeighbors = typedNeighbors(landCell, TERRAIN_SEA).map(neighbor => neighbor.cell);
       if (seaNeighbors.length !== 1 || seaNeighbors[0] !== seaCell) continue;
       const key = `${landCell.id}:${seaCell.id}`;
       if (seen.has(key)) continue;
@@ -350,20 +355,20 @@ function computeBanks(landmass, riverCells) {
 function writeBankAreas(map, bankA, bankB) {
   map.areas = (map.areas ?? []).filter(group => group.name !== "river-banks");
   map.areas.push(AreaGroup("river-banks", [
-    Area("BANK-A", "LAND", bankA),
-    Area("BANK-B", "LAND", bankB),
+    Area("BANK-A", TERRAIN_LAND, bankA),
+    Area("BANK-B", TERRAIN_LAND, bankB),
   ]));
 }
 
 function drawRiver(candidate, map, color = "blue") {
   const points = [];
   const firstMouth = candidate.originalMouth;
-  const firstSea = typedNeighbors(firstMouth, "SEA")[0]?.cell;
+  const firstSea = typedNeighbors(firstMouth, TERRAIN_SEA)[0]?.cell;
   const firstMouthEdge = H.cellsEdge(firstSea, firstMouth);
   if (firstMouthEdge) points.push(H.midpoint(firstMouthEdge.start, firstMouthEdge.end));
 
   candidate.riverCells.forEach(cell => points.push(H.cellCentroid(cell)));
-  const exit = candidate.riverCells.at(-1)?.edges.find(edge => edge.flags?.has("Boundary"));
+  const exit = candidate.riverCells.at(-1)?.edges.find(edge => edge.flags?.has(MAP_FLAG_BOUNDARY));
   if (exit) points.push(H.midpoint(exit.start, exit.end));
 
   const d = points.length > 0
@@ -430,11 +435,11 @@ function passableLandNeighbors(cell, landSet) {
 }
 
 function landNeighbors(cell) {
-  return typedNeighbors(cell, "LAND");
+  return typedNeighbors(cell, TERRAIN_LAND);
 }
 
 function seaNeighbors(cell) {
-  return typedNeighbors(cell, "SEA");
+  return typedNeighbors(cell, TERRAIN_SEA);
 }
 
 function typedNeighbors(cell, type) {
@@ -450,7 +455,7 @@ function otherSide(edge, cell) {
 }
 
 function touchesBoundary(cell) {
-  return cell.edges.some(edge => edge.flags?.has("Boundary"));
+  return cell.edges.some(edge => edge.flags?.has(MAP_FLAG_BOUNDARY));
 }
 
 function largestComponent(components) {

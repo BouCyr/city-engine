@@ -2,9 +2,19 @@ import {cloneDeepKeepFunctions} from "../data/clone.mjs";
 import {Area, AreaGroup} from "../data/area.mjs";
 import {cellCentroid} from "../data/helper.mjs";
 import {orderedCellPoints} from "../data/cell.mjs";
-import {TERRAIN_COAST, TERRAIN_LAND, TERRAIN_SEA} from "./004-sea-land.mjs";
+import {
+  AREA_NAME_LAND,
+  AREA_NAME_SEA,
+  EDGE_TYPE_COAST,
+  EDGE_TYPE_SEA,
+  MAP_FLAG_NEEDLE,
+  OVERLAY_TYPE_RIVERS,
+  TERRAIN_COAST,
+  TERRAIN_LAND,
+  TERRAIN_SEA,
+} from "../constants.mjs";
+import {terrainEdgeType} from "./004-sea-land.mjs";
 
-export const NEEDLE = "NEEDLE";
 const NEEDLE_MARKER_RADIUS = 4;
 const NEEDLE_MARKER_FILL = "#ff0000";
 const NEEDLE_MARKER_STROKE = "#fff";
@@ -28,12 +38,13 @@ export function markNeedles(_settings, map) {
 
   for (const cell of needleCells) {
     refreshTerrainFlags(cell, TERRAIN_SEA);
-    cell.flags?.add?.(NEEDLE);
+    cell.flags?.add?.(MAP_FLAG_NEEDLE);
   }
 
   for (const edge of map.edges || []) {
     const terrain = classifyEdgeTerrain(edge);
     refreshTerrainFlags(edge, terrain);
+    edge.type = terrainEdgeType(terrain);
     edge.draw = terrainEdgeDraw;
   }
 
@@ -119,7 +130,7 @@ function createNeedleNodeOverlay(map, needleNodeIds) {
   const nodeById = new Map(map.nodes.map((node) => [node.id, node]));
 
   return {
-    type: "rivers",
+    type: OVERLAY_TYPE_RIVERS,
     points: [...needleNodeIds]
       .map((nodeId) => {
         const node = nodeById.get(nodeId);
@@ -145,7 +156,7 @@ function createNeedleNodeOverlay(map, needleNodeIds) {
 
 function createNeedleCellOverlay(map, needleCellIds) {
   return {
-    type: "rivers",
+    type: OVERLAY_TYPE_RIVERS,
     polygons: map.cells
       .filter((cell) => needleCellIds.has(cell.id))
       .map((cell) => ({
@@ -259,8 +270,8 @@ function rebuildTerrainAreas(map) {
   }
 
   const terrainGroup = AreaGroup("terrain", [
-    Area("sea", TERRAIN_SEA, seaCells),
-    Area("land", TERRAIN_LAND, landCells),
+    Area(AREA_NAME_SEA, TERRAIN_SEA, seaCells),
+    Area(AREA_NAME_LAND, TERRAIN_LAND, landCells),
   ]);
 
   map.areas = (map.areas || []).filter((group) => group?.name !== "terrain");
@@ -306,9 +317,9 @@ function terrainEdgeDraw(svg) {
 
   path.setAttribute("d", `M ${this.start.x} ${this.start.y} L ${this.end.x} ${this.end.y}`);
   path.setAttribute("fill", "none");
-  path.setAttribute("stroke", this.flags?.has(TERRAIN_COAST)
+  path.setAttribute("stroke", this.type === EDGE_TYPE_COAST
     ? "var(--coast-edge)"
-    : this.flags?.has(TERRAIN_SEA)
+    : this.type === EDGE_TYPE_SEA
       ? "var(--sea-edge)"
       : "var(--land-edge)");
   path.setAttribute("stroke-width", "var(--edge-stroke-width)");

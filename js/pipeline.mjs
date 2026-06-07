@@ -2,6 +2,7 @@ import {steps} from "./steps.mjs";
 import {Map} from "./data/map.mjs";
 import {cloneDeepKeepFunctions} from "./data/clone.mjs";
 import {Area, AreaGroup} from "./data/area.mjs";
+import {AREA_NAME_LAND, AREA_NAME_SEA, TERRAIN_LAND, TERRAIN_SEA} from "./constants.mjs";
 
 export function runPipeline(settings, initialMap = new Map(settings), registeredSteps = steps) {
   let map = initialMap;
@@ -65,8 +66,8 @@ function rebuildTerrainAreaGroup(map) {
   const seaCells = [];
   const landCells = [];
   for (const cell of map.cells) {
-    if (cell.type === "SEA") seaCells.push(cell);
-    else if (cell.type === "LAND") landCells.push(cell);
+    if (cell.type === TERRAIN_SEA) seaCells.push(cell);
+    else if (cell.type === TERRAIN_LAND) landCells.push(cell);
   }
   if (!terrainGroup && seaCells.length === 0 && landCells.length === 0) return;
 
@@ -77,14 +78,14 @@ function rebuildTerrainAreaGroup(map) {
   map.areas = [
     ...otherGroups,
     AreaGroup("terrain", [
-      Area("sea", "SEA", seaCells),
-      Area("land", "LAND", landCells),
+      Area(AREA_NAME_SEA, TERRAIN_SEA, seaCells),
+      Area(AREA_NAME_LAND, TERRAIN_LAND, landCells),
     ]),
   ];
 }
 
 function hasRichTerrainAreas(terrainGroup) {
-  return (terrainGroup?.areas ?? []).some((area) => area?.tint !== undefined || area?.kind !== undefined || area?.tintOpacity !== undefined);
+  return (terrainGroup?.areas ?? []).some((area) => area?.kind !== undefined);
 }
 
 function now() {

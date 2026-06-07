@@ -1,7 +1,9 @@
 
 
+import {NODE_TYPE_POI} from "../constants.mjs";
+
 export function Poi(id, x,y, drawFn = null, flags= []){
-  return Node(id, x,y, "POI", drawFn, flags)
+  return Node(id, x,y, NODE_TYPE_POI, drawFn, flags)
 }
 
 export function Node(id, x,y, type, drawFn = null, flags= []){

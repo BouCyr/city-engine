@@ -1,6 +1,14 @@
 import * as H from "../data/helper.mjs";
 import {Settings} from "../data/settings.mjs";
 import {
+  MAP_FLAG_BOUNDARY,
+  RIVER_ROLE_FIRST_TRIBUTARY,
+  RIVER_ROLE_SECOND_TRIBUTARY,
+  RIVER_TYPE_TRIBUTARY,
+  TERRAIN_LAND,
+  TERRAIN_SEA,
+} from "../constants.mjs";
+import {
   compareByPathCost,
   compareCells,
   connectedComponents,
@@ -31,7 +39,7 @@ export function computeTributaries(settings, map) {
     return map;
   }
 
-  const landmass = largestComponent(connectedComponents(map.cells.filter(cell => cell.type === "LAND"), landNeighbors));
+  const landmass = largestComponent(connectedComponents(map.cells.filter(cell => cell.type === TERRAIN_LAND), landNeighbors));
   if (landmass.length === 0) {
     console.info("Tributaries: no landmass found");
     return map;
@@ -76,11 +84,11 @@ export function computeTributaries(settings, map) {
       riverExitPoint: mainRiverExitPoint(mainRiver, meanderedTributary.mouth?.riverCell),
     };
     const normalized = normalizeRiver(meanderedTributary, {
-      type: "TRIBUTARY",
+      type: RIVER_TYPE_TRIBUTARY,
       id: `river-${rivers.length}`,
       order: rivers.length,
       sourceRiverId: mainRiver.id ?? "river-0",
-      role: rivers.length === 1 ? "FIRST_TRIBUTARY" : "SECOND_TRIBUTARY",
+      role: rivers.length === 1 ? RIVER_ROLE_FIRST_TRIBUTARY : RIVER_ROLE_SECOND_TRIBUTARY,
     });
     rivers.push(normalized);
     previousTributaryMouth = normalized.mouth.cell;
@@ -189,7 +197,7 @@ function computeDistanceFromSeaOrRiver(bank, bankSet, mainRiverSet) {
 
   const starts = [];
   for (const cell of bank) {
-    const touchesSea = typedNeighbors(cell, "SEA").length > 0;
+    const touchesSea = typedNeighbors(cell, TERRAIN_SEA).length > 0;
     const touchesRiver = landNeighbors(cell).some(neighbor => mainRiverSet.has(neighbor.cell));
     if (!touchesSea && !touchesRiver) continue;
 
@@ -210,7 +218,7 @@ function computeDistanceFromSeaOrRiver(bank, bankSet, mainRiverSet) {
 function computeSeaOnlyDistances(landSet) {
   const starts = [];
   for (const cell of landSet) {
-    if (typedNeighbors(cell, "SEA").length === 0) continue;
+    if (typedNeighbors(cell, TERRAIN_SEA).length === 0) continue;
     starts.push(cell);
   }
 
@@ -294,7 +302,7 @@ function mainRiverExitPoint(mainRiver, mergeCell) {
     return edge ? H.midpoint(edge.start, edge.end) : H.cellCentroid(next);
   }
 
-  const exitEdge = mergeCell.edges.find(edge => edge.flags?.has("Boundary"));
+  const exitEdge = mergeCell.edges.find(edge => edge.flags?.has(MAP_FLAG_BOUNDARY));
   return exitEdge ? H.midpoint(exitEdge.start, exitEdge.end) : H.cellCentroid(mergeCell);
 }
 

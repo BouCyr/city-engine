@@ -2,16 +2,23 @@ import {cloneDeepKeepFunctions} from "../data/clone.mjs";
 import {Edge} from "../data/edge.mjs";
 import * as H from "../data/helper.mjs";
 import {Node} from "../data/nodes.mjs";
+import {
+  EDGE_TYPE_RIVER,
+  MAP_FLAG_FIXED,
+  NODE_TYPE_RIVER,
+  NODE_TYPE_RIVER_JUNCTION,
+  OVERLAY_TYPE_RIVERS,
+  RIVER_ROLE_PRIMARY,
+  RIVER_TYPE_MAIN,
+} from "../constants.mjs";
 
-export const FIXED_FLAG = "FIXED";
-export const RIVER_EDGE_TYPE = "river";
 export const TARGET_RIVER_SEGMENT_LENGTH = 10;
 const FIXED_COLOR = "#ef4444";
 const VIOLET_COLOR = "#8b5cf6";
 const RIVER_COLOR = "var(--sea-edge)";
 
 function isPrimaryRiverEdge(edge) {
-  return edge.riverRole === "PRIMARY" || edge.riverRole === "MAIN";
+  return edge.riverRole === RIVER_ROLE_PRIMARY || edge.riverRole === RIVER_TYPE_MAIN;
 }
 
 function isTributaryRiverEdge(edge) {
@@ -156,7 +163,7 @@ function createSmoothRiverContext(map, options = {}) {
   const shouldProcessEdge = options.shouldProcessEdge ?? (() => true);
   const keepMergeAnchors = options.keepMergeAnchors ?? false;
 
-  const riverEdges = map.edges.filter((edge) => edge.type === RIVER_EDGE_TYPE);
+  const riverEdges = map.edges.filter((edge) => edge.type === EDGE_TYPE_RIVER);
   return {
     map,
     riverEdges,
@@ -173,13 +180,13 @@ function bisectRiverEdges(context) {
   const edgesToBisect = [...context.riverEdges].filter(shouldProcessEdge);
 
   for (const node of mergeNodes) {
-    node.flags?.add(FIXED_FLAG);
+    node.flags?.add(MAP_FLAG_FIXED);
     fixedNodes.push(node);
   }
 
   const plannedEdges = [...edgesToBisect].sort((a, b) => String(a.id).localeCompare(String(b.id)));
   for (const edge of plannedEdges) {
-    if (!map.edges.includes(edge) || edge.type !== RIVER_EDGE_TYPE) continue;
+    if (!map.edges.includes(edge) || edge.type !== EDGE_TYPE_RIVER) continue;
     if (!shouldProcessEdge(edge)) continue;
     if (keepMergeAnchors && (mergeNodes.has(edge.start) || mergeNodes.has(edge.end))) continue;
 
@@ -195,7 +202,7 @@ function bisectRiverEdges(context) {
 function sampleRiverEdges(context) {
   const plannedEdges = mapRiverEdges(context.map, context.shouldProcessEdge);
   for (const edge of plannedEdges) {
-    if (!context.map.edges.includes(edge) || edge.type !== RIVER_EDGE_TYPE) continue;
+    if (!context.map.edges.includes(edge) || edge.type !== EDGE_TYPE_RIVER) continue;
     replaceRiverEdgeWithSamples(context, edge);
   }
 }
@@ -209,7 +216,7 @@ function findMergeNodes(riverEdges) {
 
   return new Set(
     [...degree.entries()]
-      .filter(([node, count]) => node.type === "river-junction" || count > 2)
+      .filter(([node, count]) => node.type === NODE_TYPE_RIVER_JUNCTION || count > 2)
       .map(([node]) => node)
   );
 }
@@ -220,7 +227,7 @@ function replaceRiverEdgeWithSamples(context, edge) {
 }
 
 function createFixedNode(map, edge, point) {
-  const node = Node(`river-fixed-${map.nodes.length}`, point.x, point.y, "river", null, [FIXED_FLAG]);
+  const node = Node(`river-fixed-${map.nodes.length}`, point.x, point.y, NODE_TYPE_RIVER, null, [MAP_FLAG_FIXED]);
   node.smoothRiverGenerated = true;
   node.smoothRiverSourceEdgeId = edge.id;
   map.nodes.push(node);
@@ -238,7 +245,7 @@ function sampleSegment(context, sourceEdge, start, end) {
       `river-sample-${context.map.nodes.length}`,
       start.x + (end.x - start.x) * t,
       start.y + (end.y - start.y) * t,
-      "river"
+      NODE_TYPE_RIVER
     );
     node.smoothRiverGenerated = true;
     node.smoothRiverSourceEdgeId = sourceEdge.id;
@@ -283,7 +290,7 @@ function replaceEdgeReferences(map, edge, replacementEdges) {
 }
 
 function planBezierMoves(context) {
-  const adjacency = buildRiverAdjacency(context.map.edges.filter((edge) => edge.type === RIVER_EDGE_TYPE && context.shouldProcessEdge(edge)));
+  const adjacency = buildRiverAdjacency(context.map.edges.filter((edge) => edge.type === EDGE_TYPE_RIVER && context.shouldProcessEdge(edge)));
   const paths = collectFixedNodePaths(adjacency);
   const moves = [];
   const curvePaths = [];
@@ -299,7 +306,7 @@ function planBezierMoves(context) {
 
     for (let index = 1; index < path.nodes.length - 1; index += 1) {
       const node = path.nodes[index];
-      if (node.flags?.has(FIXED_FLAG)) continue;
+      if (node.flags?.has(MAP_FLAG_FIXED)) continue;
       const point = quadraticBezier(start, control, end, ratios[index]);
       moves.push({
         node,
@@ -342,7 +349,7 @@ function collectFixedNodePaths(adjacency) {
   const paths = [];
   const visitedEdges = new Set();
   const fixedNodes = [...adjacency.keys()]
-    .filter((node) => node.flags?.has(FIXED_FLAG))
+    .filter((node) => node.flags?.has(MAP_FLAG_FIXED))
     .sort((a, b) => String(a.id).localeCompare(String(b.id)));
 
   for (const start of fixedNodes) {
@@ -350,7 +357,7 @@ function collectFixedNodePaths(adjacency) {
     for (const neighbor of neighbors) {
       if (visitedEdges.has(neighbor.edge)) continue;
       const path = walkToFixedNode(start, neighbor, adjacency, visitedEdges);
-      if (path.nodes.at(-1)?.flags?.has(FIXED_FLAG)) paths.push(path);
+      if (path.nodes.at(-1)?.flags?.has(MAP_FLAG_FIXED)) paths.push(path);
     }
   }
 
@@ -365,7 +372,7 @@ function walkToFixedNode(start, first, adjacency, visitedEdges) {
   let previous = start;
   let current = first.node;
 
-  while (!current.flags?.has(FIXED_FLAG)) {
+  while (!current.flags?.has(MAP_FLAG_FIXED)) {
     const next = (adjacency.get(current) ?? [])
       .filter((entry) => entry.node !== previous)
       .sort(compareAdjacencyEntries)[0];
@@ -403,13 +410,13 @@ function quadraticBezier(start, control, end, t) {
 
 function updateRiverTopologyEdges(map) {
   for (const river of map.rivers ?? []) {
-    river.topologyEdges = map.edges.filter((edge) => edge.type === RIVER_EDGE_TYPE && edge.riverId === river.id);
+    river.topologyEdges = map.edges.filter((edge) => edge.type === EDGE_TYPE_RIVER && edge.riverId === river.id);
   }
 }
 
 function mapRiverEdges(map, shouldProcessEdge = () => true) {
   return map.edges
-    .filter((edge) => edge.type === RIVER_EDGE_TYPE && shouldProcessEdge(edge))
+    .filter((edge) => edge.type === EDGE_TYPE_RIVER && shouldProcessEdge(edge))
     .sort((a, b) => String(a.id).localeCompare(String(b.id)));
 }
 
@@ -422,7 +429,7 @@ function replayFrame(map, label, text, overlay) {
 
 function emptySmoothRiverOverlay() {
   return {
-    type: "rivers",
+    type: OVERLAY_TYPE_RIVERS,
     polygons: [],
     arrows: [],
     lines: [],
@@ -433,7 +440,7 @@ function emptySmoothRiverOverlay() {
 
 function cloneSmoothRiverOverlay(overlay) {
   return {
-    type: "rivers",
+    type: OVERLAY_TYPE_RIVERS,
     polygons: (overlay.polygons ?? []).map(polygon => ({...polygon, points: (polygon.points ?? []).map(point => ({...point}))})),
     arrows: (overlay.arrows ?? []).map(arrow => ({...arrow})),
     lines: (overlay.lines ?? []).map(line => ({...line})),
@@ -495,7 +502,7 @@ function finalRiverPaths(map) {
     .map((edges) => ({
       d: edgeChainPath(edges),
       stroke: RIVER_COLOR,
-      strokeWidth: edges[0]?.riverRole === "PRIMARY" ? 12 : 8,
+      strokeWidth: edges[0]?.riverRole === RIVER_ROLE_PRIMARY ? 12 : 8,
       opacity: 0.85,
     }));
 }

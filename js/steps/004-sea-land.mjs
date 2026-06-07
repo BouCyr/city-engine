@@ -2,10 +2,22 @@ import {orderedCellPoints} from "../data/cell.mjs";
 import {Area, AreaGroup} from "../data/area.mjs";
 import {cloneDeepKeepFunctions} from "../data/clone.mjs";
 import {valueNoise2D} from "../data/noise.mjs";
-
-export const TERRAIN_SEA = "SEA";
-export const TERRAIN_LAND = "LAND";
-export const TERRAIN_COAST = "COAST";
+import {
+  EDGE_TYPE_COAST,
+  EDGE_TYPE_LAND,
+  EDGE_TYPE_SEA,
+  AREA_NAME_LAND,
+  AREA_NAME_SEA,
+  MAP_FLAG_BOUNDARY,
+  OVERLAY_TYPE_COAST_CENTROIDS,
+  OVERLAY_TYPE_COAST_FIELD,
+  TERRAIN_CLASS_COAST,
+  TERRAIN_CLASS_LAND,
+  TERRAIN_CLASS_SEA,
+  TERRAIN_COAST,
+  TERRAIN_LAND,
+  TERRAIN_SEA,
+} from "../constants.mjs";
 const EPSILON = 1e-7;
 const HEATMAP_GRID_SIZE = 48;
 
@@ -276,7 +288,19 @@ function setTerrainFlags(entity, terrain) {
 }
 
 function terrainClass(cell) {
-  return cell.type === TERRAIN_SEA ? "sea" : "land";
+  return cell.type === TERRAIN_SEA ? TERRAIN_CLASS_SEA : TERRAIN_CLASS_LAND;
+}
+
+export function terrainEdgeType(terrain) {
+  if (terrain === TERRAIN_SEA) return EDGE_TYPE_SEA;
+  if (terrain === TERRAIN_COAST) return EDGE_TYPE_COAST;
+  return EDGE_TYPE_LAND;
+}
+
+function terrainClassForEdge(edge) {
+  if (edge.type === EDGE_TYPE_SEA) return TERRAIN_CLASS_SEA;
+  if (edge.type === EDGE_TYPE_COAST) return TERRAIN_CLASS_COAST;
+  return TERRAIN_CLASS_LAND;
 }
 
 function drawTerrainCell(svg) {
@@ -301,27 +325,20 @@ function rebuildTerrainAreas(map) {
 
   map.areas = [
     AreaGroup("terrain", [
-      Area("sea", TERRAIN_SEA, seaCells),
-      Area("land", TERRAIN_LAND, landCells),
+      Area(AREA_NAME_SEA, TERRAIN_SEA, seaCells),
+      Area(AREA_NAME_LAND, TERRAIN_LAND, landCells),
     ]),
   ];
 }
 
-function drawTerrainEdge(svg) {
+export function drawTerrainEdge(svg) {
   const layer = svg.getElementById("edges");
   if (!layer) return;
 
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
   path.setAttribute("d", `M ${this.start.x} ${this.start.y} L ${this.end.x} ${this.end.y}`);
 
-  const flags = ensureSetFlags(this);
-  if (flags.has(TERRAIN_COAST)) {
-    path.setAttribute("class", "edge terrain-coast");
-  } else if (flags.has(TERRAIN_SEA)) {
-    path.setAttribute("class", "edge terrain-sea");
-  } else {
-    path.setAttribute("class", "edge terrain-land");
-  }
+  path.setAttribute("class", `edge terrain-${terrainClassForEdge(this)}`);
 
   layer.appendChild(path);
 }
@@ -463,6 +480,7 @@ function buildCoast(settings, map, options = {}) {
   for (const edge of map.edges) {
     const terrain = classifyEdgeTerrain(edge, seaBorders, map.size);
     setTerrainFlags(edge, terrain);
+    edge.type = terrainEdgeType(terrain);
     edge.draw = drawTerrainEdge;
   }
 
@@ -473,6 +491,7 @@ function buildCoast(settings, map, options = {}) {
   rebuildTerrainAreas(map);
 
   for (const node of map.nodes) {
+    node.type = terrainNodeType(node);
     node.draw = null;
   }
 
@@ -488,6 +507,14 @@ function buildCoast(settings, map, options = {}) {
     map,
     replay: frames ? {frames} : null,
   };
+}
+
+function terrainNodeType(node) {
+  const edges = [...(node.edges ?? [])];
+  if (edges.some((edge) => edge.type === EDGE_TYPE_COAST)) return EDGE_TYPE_COAST;
+  if (edges.some((edge) => edge.type === EDGE_TYPE_LAND)) return EDGE_TYPE_LAND;
+  if (edges.some((edge) => edge.type === EDGE_TYPE_SEA)) return EDGE_TYPE_SEA;
+  return node.type;
 }
 
 function appendSummaryRow(tbody, label, value) {
@@ -607,7 +634,7 @@ function pushTerrainFrame(frames, map, label, text, centroids) {
 
 function createCoastFieldOverlaySpec({size, seaBorders, params, noiseSeed, layer}) {
   return {
-    type: "coast-field",
+    type: OVERLAY_TYPE_COAST_FIELD,
     size,
     seaBorders: Array.from(seaBorders),
     cells: createHeatmapCells(size, seaBorders, params, noiseSeed, layer),
@@ -633,7 +660,7 @@ function createCoastFieldOverlayDraw({size, seaBorders, cells}) {
 
 function createCentroidOverlaySpec(centroids) {
   return {
-    type: "coast-centroids",
+    type: OVERLAY_TYPE_COAST_CENTROIDS,
     points: centroids.map((point) => ({x: point.x, y: point.y})),
   };
 }
@@ -788,10 +815,10 @@ function applyGridSeaCorrection(map, seaBorders) {
     const gy = Math.min(gridCount - 1, Math.floor(centroid.y / squareSize));
     const counter = grid[gx][gy];
 
-    const hasBoundaryEdge = cell.edges.some(e => e.flags && e.flags.has("Boundary"));
+    const hasBoundaryEdge = cell.edges.some(e => e.flags && e.flags.has(MAP_FLAG_BOUNDARY));
     const hasNeighborNextToBoundary = cell.edges.some(e => {
       const neighbor = (e.leftCell === cell) ? e.rightCell : e.leftCell;
-      return neighbor && neighbor.edges.some(ne => ne.flags && ne.flags.has("Boundary"));
+      return neighbor && neighbor.edges.some(ne => ne.flags && ne.flags.has(MAP_FLAG_BOUNDARY));
     });
 
     let mustBeSea = false;

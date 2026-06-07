@@ -17,11 +17,44 @@ import {
 } from "./replay-service.mjs";
 import {steps} from "./steps.mjs";
 import {settingsForStep} from "./ui/settings-panel.mjs";
+import {
+  AREA_KIND_INNER_SEA,
+  AREA_KIND_OPEN_SEA,
+  AREA_NAME_LAND,
+  AREA_NAME_SEA,
+  CELL_TYPE_CELL,
+  EDGE_TYPE_RIVER,
+  EDGE_TYPE_VORONOI,
+  MAP_FLAG_BOUNDARY,
+  MAP_FLAG_COAST_GAP,
+  MAP_FLAG_FIXED,
+  MAP_FLAG_RIVER,
+  MAP_FLAG_TEST,
+  MAP_FLAG_TEST_GATE,
+  MAP_FLAG_TEST_PRIMARY,
+  NODE_TYPE_RIVER,
+  NODE_TYPE_RIVER_JUNCTION,
+  NODE_TYPE_TEST_FIXTURE,
+  NODE_TYPE_TEST_GRID,
+  NODE_TYPE_TEST_SPLIT,
+  NODE_TYPE_VORONOI,
+  EDGE_TYPE_TEST_FIXTURE,
+  EDGE_TYPE_TEST_GRID,
+  EDGE_TYPE_TEST_ROAD,
+  OVERLAY_TYPE_RIVERS,
+  RIVER_ROLE_FIRST_TRIBUTARY,
+  RIVER_ROLE_PRIMARY,
+  RIVER_TYPE_MAIN,
+  RIVER_TYPE_TRIBUTARY,
+  TERRAIN_LAND,
+  TERRAIN_SEA,
+  TERRAIN_COAST,
+} from "./constants.mjs";
 import {createReplay as createScatterReplay, scatterPoints} from "./steps/000-scatter.mjs";
 import {cells, createReplay as createGatherReplay} from "./steps/001-gather.mjs";
 import {relax} from "./steps/002-lloyd.mjs";
 import {prune} from "./steps/003-prune.mjs";
-import {classifySeaLand, coastLayersAt, createReplay as createCoastReplay, TERRAIN_COAST, TERRAIN_LAND, TERRAIN_SEA} from "./steps/004-sea-land.mjs";
+import {classifySeaLand, coastLayersAt, createReplay as createCoastReplay} from "./steps/004-sea-land.mjs";
 import {computeRivers as computeLegacyRivers, MIN_EDGE_SIZE as LEGACY_MIN_EDGE_SIZE, selectRiver} from "./steps/005-rivers.mjs";
 import {
   computeRivers as computeAStarRivers,
@@ -40,7 +73,6 @@ import {
   createReplay as createSmoothRiversReplay,
   createPrimaryReplay as createPrimaryRiversReplay,
   createTributariesReplay as createTributariesRiversReplay,
-  FIXED_FLAG,
   smoothRivers,
   smoothPrimaryRivers,
   smoothTributariesRivers,
@@ -94,10 +126,10 @@ function createSvgProbe() {
 function buildMapWithEdge() {
   const settings = new Settings();
   const map = new Map(settings);
-  const first = Poi("first", 1, 2, null, ["gate"]);
+  const first = Poi("first", 1, 2, null, [MAP_FLAG_TEST_GATE]);
   const second = Poi("second", 3, 4);
   map.nodes.push(first, second);
-  map.edges.push(Edge("edge", first, second, "road", null, ["primary"]));
+  map.edges.push(Edge("edge", first, second, EDGE_TYPE_TEST_ROAD, null, [MAP_FLAG_TEST_PRIMARY]));
   return map;
 }
 
@@ -109,8 +141,8 @@ function validateCloneIdentityAndFlags() {
   assert.equal(cloned.edges[0].end, cloned.nodes[1]);
   assert.ok(cloned.nodes[0].flags instanceof Set);
   assert.ok(cloned.edges[0].flags instanceof Set);
-  assert.ok(cloned.nodes[0].flags.has("gate"));
-  assert.ok(cloned.edges[0].flags.has("primary"));
+  assert.ok(cloned.nodes[0].flags.has(MAP_FLAG_TEST_GATE));
+  assert.ok(cloned.edges[0].flags.has(MAP_FLAG_TEST_PRIMARY));
 }
 
 function validateSnapshotDrawingUsesClonedNodes() {
@@ -126,10 +158,10 @@ function validateSnapshotDrawingUsesClonedNodes() {
 function validateClonePreservesCellToSeaReference() {
   const map = buildMapWithEdge();
   const [edge] = map.edges;
-  const seaCell = Cell("sea", [edge]);
-  const landCell = Cell("land", [edge]);
-  seaCell.type = "SEA";
-  landCell.type = "LAND";
+  const seaCell = Cell(AREA_NAME_SEA, [edge]);
+  const landCell = Cell(AREA_NAME_LAND, [edge]);
+  seaCell.type = TERRAIN_SEA;
+  landCell.type = TERRAIN_LAND;
   landCell.toSea = seaCell;
   edge.leftCell = seaCell;
   edge.rightCell = landCell;
@@ -289,7 +321,7 @@ function validateGatherVoronoi() {
   assert.equal(result.cells.length, 3);
   assert.ok(result.nodes.length > 0);
   assert.ok(result.edges.length > 0);
-  assert.ok(result.nodes.every(node => node.type === "Voronoi"));
+  assert.ok(result.nodes.every(node => node.type === NODE_TYPE_VORONOI));
 
   for (const edge of result.edges) {
     assert.ok(result.nodes.includes(edge.start));
@@ -304,8 +336,8 @@ function validateGatherVoronoi() {
     assert.ok(cell.edges.every(edge => result.edges.includes(edge)));
   }
 
-  assert.ok(result.nodes.some(node => node.flags.has("Boundary")));
-  assert.ok(result.edges.some(edge => edge.flags.has("Boundary")));
+  assert.ok(result.nodes.some(node => node.flags.has(MAP_FLAG_BOUNDARY)));
+  assert.ok(result.edges.some(edge => edge.flags.has(MAP_FLAG_BOUNDARY)));
 }
 
 function validateGatherReplay() {
@@ -413,7 +445,7 @@ function validateLloydRelaxation() {
   assert.equal(relaxed.cells.length, gathered.cells.length);
   assert.ok(relaxed.nodes.length > 0);
   assert.ok(relaxed.edges.length > 0);
-  assert.ok(relaxed.nodes.every(node => node.type === "Voronoi"));
+  assert.ok(relaxed.nodes.every(node => node.type === NODE_TYPE_VORONOI));
   assert.notDeepEqual(
     relaxed.nodes.map(node => [Math.round(node.x), Math.round(node.y)]),
     gathered.nodes.map(node => [Math.round(node.x), Math.round(node.y)]),
@@ -437,8 +469,8 @@ function validatePruneRemovesAndRewires() {
   const end = Poi("end", 10, 500);
 
   map.nodes.push(start, middle, end);
-  const shortEdge = Edge("short", start, middle, "Voronoi", null, ["Boundary"]);
-  const connectedEdge = Edge("connected", middle, end, "Voronoi", null, []);
+  const shortEdge = Edge("short", start, middle, EDGE_TYPE_VORONOI, null, [MAP_FLAG_BOUNDARY]);
+  const connectedEdge = Edge("connected", middle, end, EDGE_TYPE_VORONOI, null, []);
   map.edges.push(shortEdge, connectedEdge);
 
   const result = prune(settings, map);
@@ -460,13 +492,13 @@ function validatePruneCellDeletion() {
   const map = new Map(settings);
 
   const a = Poi("a", 20, 20);
-  const b = Poi("b", 30, 20, null, ["Boundary"]);
+  const b = Poi("b", 30, 20, null, [MAP_FLAG_BOUNDARY]);
   const c = Poi("c", 30, 30);
-  const cell = {id: "cell", type: "Cell", edges: [], flags: new Set(), fill: null, draw: () => {}};
+  const cell = {id: "cell", type: CELL_TYPE_CELL, edges: [], flags: new Set(), fill: null, draw: () => {}};
 
-  const e1 = Edge("e1", a, b, "Voronoi");
-  const e2 = Edge("e2", b, c, "Voronoi");
-  const e3 = Edge("e3", c, a, "Voronoi");
+  const e1 = Edge("e1", a, b, EDGE_TYPE_VORONOI);
+  const e2 = Edge("e2", b, c, EDGE_TYPE_VORONOI);
+  const e3 = Edge("e3", c, a, EDGE_TYPE_VORONOI);
   e1.leftCell = cell;
   e2.leftCell = cell;
   e3.leftCell = cell;
@@ -489,7 +521,7 @@ function validatePruneBoundaryRules() {
   const northA = Poi("northA", 10, 0);
   const northB = Poi("northB", 30, 0);
   sameBoundaryMap.nodes.push(northA, northB);
-  sameBoundaryMap.edges.push(Edge("north-edge", northA, northB, "Voronoi", null, ["Boundary"]));
+  sameBoundaryMap.edges.push(Edge("north-edge", northA, northB, EDGE_TYPE_VORONOI, null, [MAP_FLAG_BOUNDARY]));
 
   const sameBoundaryResult = prune(sameBoundarySettings, sameBoundaryMap);
   const mergedSame = sameBoundaryResult.nodes.find((node) => ![northA, northB].includes(node));
@@ -502,7 +534,7 @@ function validatePruneBoundaryRules() {
   const north = Poi("north", 200, 0);
   const east = Poi("east", adjacentSettings.size, 200);
   adjacentMap.nodes.push(north, east);
-  adjacentMap.edges.push(Edge("adjacent", north, east, "Voronoi"));
+  adjacentMap.edges.push(Edge("adjacent", north, east, EDGE_TYPE_VORONOI));
 
   const adjacentResult = prune(adjacentSettings, adjacentMap);
   const mergedAdjacent = adjacentResult.nodes.find((node) => ![north, east].includes(node));
@@ -515,7 +547,7 @@ function validatePruneBoundaryRules() {
   const northOpp = Poi("north-opp", 300, 0);
   const southOpp = Poi("south-opp", 320, oppositeSettings.size);
   oppositeMap.nodes.push(northOpp, southOpp);
-  oppositeMap.edges.push(Edge("opp", northOpp, southOpp, "Voronoi"));
+  oppositeMap.edges.push(Edge("opp", northOpp, southOpp, EDGE_TYPE_VORONOI));
   assert.throws(() => prune(oppositeSettings, oppositeMap), /opposite boundaries/);
 }
 
@@ -536,22 +568,22 @@ function createTwoCellCoastFixture(seed = "sea-land-test") {
   };
 
   const map = new Map(settings);
-  const n1 = Node("a", 0, 0, "split", null, ["Boundary"]);
-  const n2 = Node("b", 1500, 0, "split", null, ["Boundary"]);
-  const n3 = Node("c", 3000, 0, "split", null, ["Boundary"]);
-  const n4 = Node("d", 3000, 3000, "split", null, ["Boundary"]);
-  const n5 = Node("e", 1500, 3000, "split", null, ["Boundary"]);
-  const n6 = Node("f", 0, 3000, "split", null, ["Boundary"]);
+  const n1 = Node("a", 0, 0, NODE_TYPE_TEST_SPLIT, null, [MAP_FLAG_BOUNDARY]);
+  const n2 = Node("b", 1500, 0, NODE_TYPE_TEST_SPLIT, null, [MAP_FLAG_BOUNDARY]);
+  const n3 = Node("c", 3000, 0, NODE_TYPE_TEST_SPLIT, null, [MAP_FLAG_BOUNDARY]);
+  const n4 = Node("d", 3000, 3000, NODE_TYPE_TEST_SPLIT, null, [MAP_FLAG_BOUNDARY]);
+  const n5 = Node("e", 1500, 3000, NODE_TYPE_TEST_SPLIT, null, [MAP_FLAG_BOUNDARY]);
+  const n6 = Node("f", 0, 3000, NODE_TYPE_TEST_SPLIT, null, [MAP_FLAG_BOUNDARY]);
   map.nodes.push(n1, n2, n3, n4, n5, n6);
 
-  const cellA = Cell("A", [], ["test"]);
-  const cellB = Cell("B", [], ["test"]);
+  const cellA = Cell("A", [], [MAP_FLAG_TEST]);
+  const cellB = Cell("B", [], [MAP_FLAG_TEST]);
 
-  const eTopA = Edge("eA_top", n1, n2, "Voronoi", null, ["Boundary"]);
-  const eRightA = Edge("eA_right", n2, n5, "Voronoi", null, ["Boundary"]);
-  const eBottomA = Edge("eA_bottom", n5, n6, "Voronoi", null, ["Boundary"]);
-  const eLeftA = Edge("eA_left", n6, n1, "Voronoi", null, ["Boundary"]);
-  const splitA = Edge("eA_split", n2, n5, "Voronoi", null);
+  const eTopA = Edge("eA_top", n1, n2, EDGE_TYPE_VORONOI, null, [MAP_FLAG_BOUNDARY]);
+  const eRightA = Edge("eA_right", n2, n5, EDGE_TYPE_VORONOI, null, [MAP_FLAG_BOUNDARY]);
+  const eBottomA = Edge("eA_bottom", n5, n6, EDGE_TYPE_VORONOI, null, [MAP_FLAG_BOUNDARY]);
+  const eLeftA = Edge("eA_left", n6, n1, EDGE_TYPE_VORONOI, null, [MAP_FLAG_BOUNDARY]);
+  const splitA = Edge("eA_split", n2, n5, EDGE_TYPE_VORONOI, null);
 
   cellA.edges.push(eTopA, splitA, eBottomA, eLeftA);
   eTopA.leftCell = cellA;
@@ -559,10 +591,10 @@ function createTwoCellCoastFixture(seed = "sea-land-test") {
   eBottomA.leftCell = cellA;
   eLeftA.leftCell = cellA;
 
-  const eTopB = Edge("eB_top", n2, n3, "Voronoi", null, ["Boundary"]);
-  const eRightB = Edge("eB_right", n3, n4, "Voronoi", null, ["Boundary"]);
-  const eBottomB = Edge("eB_bottom", n4, n5, "Voronoi", null, ["Boundary"]);
-  const splitB = Edge("eB_split", n5, n2, "Voronoi", null);
+  const eTopB = Edge("eB_top", n2, n3, EDGE_TYPE_VORONOI, null, [MAP_FLAG_BOUNDARY]);
+  const eRightB = Edge("eB_right", n3, n4, EDGE_TYPE_VORONOI, null, [MAP_FLAG_BOUNDARY]);
+  const eBottomB = Edge("eB_bottom", n4, n5, EDGE_TYPE_VORONOI, null, [MAP_FLAG_BOUNDARY]);
+  const splitB = Edge("eB_split", n5, n2, EDGE_TYPE_VORONOI, null);
 
   cellB.edges.push(eTopB, splitB, eBottomB, splitA);
   eTopB.leftCell = cellB;
@@ -616,8 +648,8 @@ function validateSeaLandStepClassifiesAndTags() {
   assert.equal(result.areas.length, 1);
   assert.equal(result.areas[0].name, "terrain");
   assert.equal(result.areas[0].areas.length, 2);
-  assert.equal(result.areas[0].areas[0].name, "sea");
-  assert.equal(result.areas[0].areas[1].name, "land");
+  assert.equal(result.areas[0].areas[0].name, AREA_NAME_SEA);
+  assert.equal(result.areas[0].areas[1].name, AREA_NAME_LAND);
   assert.equal(result.areas[0].areas[0].type, TERRAIN_SEA);
   assert.equal(result.areas[0].areas[1].type, TERRAIN_LAND);
   assert.ok(result.areas[0].areas[0].cells.every((cell) => result.cells.includes(cell)));
@@ -674,16 +706,16 @@ function createCoastBiasGridFixture(seed = "coast-bias-grid") {
       const y0 = boundaries[yIndex];
       const y1 = boundaries[yIndex + 1];
       const id = `cell-${xIndex}-${yIndex}`;
-      const topLeft = Node(`${id}-tl`, x0, y0, "grid");
-      const topRight = Node(`${id}-tr`, x1, y0, "grid");
-      const bottomRight = Node(`${id}-br`, x1, y1, "grid");
-      const bottomLeft = Node(`${id}-bl`, x0, y1, "grid");
+      const topLeft = Node(`${id}-tl`, x0, y0, NODE_TYPE_TEST_GRID);
+      const topRight = Node(`${id}-tr`, x1, y0, NODE_TYPE_TEST_GRID);
+      const bottomRight = Node(`${id}-br`, x1, y1, NODE_TYPE_TEST_GRID);
+      const bottomLeft = Node(`${id}-bl`, x0, y1, NODE_TYPE_TEST_GRID);
       map.nodes.push(topLeft, topRight, bottomRight, bottomLeft);
 
-      const top = Edge(`${id}-top`, topLeft, topRight, "grid");
-      const right = Edge(`${id}-right`, topRight, bottomRight, "grid");
-      const bottom = Edge(`${id}-bottom`, bottomRight, bottomLeft, "grid");
-      const left = Edge(`${id}-left`, bottomLeft, topLeft, "grid");
+      const top = Edge(`${id}-top`, topLeft, topRight, EDGE_TYPE_TEST_GRID);
+      const right = Edge(`${id}-right`, topRight, bottomRight, EDGE_TYPE_TEST_GRID);
+      const bottom = Edge(`${id}-bottom`, bottomRight, bottomLeft, EDGE_TYPE_TEST_GRID);
+      const left = Edge(`${id}-left`, bottomLeft, topLeft, EDGE_TYPE_TEST_GRID);
       const cell = Cell(id, [top, right, bottom, left]);
       top.leftCell = cell;
       right.leftCell = cell;
@@ -725,8 +757,8 @@ function createGridTerrainFixture({width, height, sea = [], seed = "river-grid"}
   for (let y = 0; y <= height; y += 1) {
     nodes[y] = [];
     for (let x = 0; x <= width; x += 1) {
-      const boundary = x === 0 || y === 0 || x === width || y === height ? ["Boundary"] : [];
-      const node = Node(`n-${x}-${y}`, x * 100, y * 100, "grid", null, boundary);
+      const boundary = x === 0 || y === 0 || x === width || y === height ? [MAP_FLAG_BOUNDARY] : [];
+      const node = Node(`n-${x}-${y}`, x * 100, y * 100, NODE_TYPE_TEST_GRID, null, boundary);
       nodes[y][x] = node;
       map.nodes.push(node);
     }
@@ -738,9 +770,9 @@ function createGridTerrainFixture({width, height, sea = [], seed = "river-grid"}
     if (!edgeByKey.has(key)) {
       const boundary = (a.x === b.x && (a.x === 0 || a.x === width * 100))
         || (a.y === b.y && (a.y === 0 || a.y === height * 100))
-        ? ["Boundary"]
+        ? [MAP_FLAG_BOUNDARY]
         : [];
-      const edge = Edge(`e-${edgeByKey.size}`, a, b, "grid", null, boundary);
+      const edge = Edge(`e-${edgeByKey.size}`, a, b, EDGE_TYPE_TEST_GRID, null, boundary);
       edgeByKey.set(key, edge);
       map.edges.push(edge);
     }
@@ -787,8 +819,8 @@ function createTributaryFixture() {
   const mainCells = [6, 5, 4, 3, 2, 1, 0].map(y => byId(`c-4-${y}`));
   map.rivers = [{
     id: "river-0",
-    type: "MAIN",
-    role: "PRIMARY",
+    type: RIVER_TYPE_MAIN,
+    role: RIVER_ROLE_PRIMARY,
     order: 0,
     sourceRiverId: null,
     riverCells: mainCells,
@@ -817,10 +849,10 @@ function validateRiversClassifyOpenAndInnerSeas() {
   const openSea = result.cells.find(cell => cell.id === "c-0-2");
   const innerSea = result.cells.find(cell => cell.id === "c-3-2");
 
-  assert.equal(openSea.seaKind, "OPEN_SEA");
-  assert.equal(innerSea.seaKind, "INNER_SEA");
-  assert.ok(openSea.flags.has("OPEN_SEA"));
-  assert.ok(innerSea.flags.has("INNER_SEA"));
+  assert.equal(openSea.seaKind, AREA_KIND_OPEN_SEA);
+  assert.equal(innerSea.seaKind, AREA_KIND_INNER_SEA);
+  assert.ok(openSea.flags.has(AREA_KIND_OPEN_SEA));
+  assert.ok(innerSea.flags.has(AREA_KIND_INNER_SEA));
 }
 
 function validateRiversComputeDistanceAndBanks() {
@@ -838,7 +870,7 @@ function validateRiversComputeDistanceAndBanks() {
   const bankGroup = result.areas.find(group => group.name === "river-banks");
   const bankA = bankGroup?.areas.find(area => area.name === "BANK-A");
   const bankB = bankGroup?.areas.find(area => area.name === "BANK-B");
-  const exitCandidates = result.cells.filter(cell => cell.type === TERRAIN_LAND && cell.edges.some(edge => edge.flags.has("Boundary")) && cell.seaD >= 5);
+  const exitCandidates = result.cells.filter(cell => cell.type === TERRAIN_LAND && cell.edges.some(edge => edge.flags.has(MAP_FLAG_BOUNDARY)) && cell.seaD >= 5);
 
   assert.ok(exitCandidates.length > 0);
   assert.ok(bankA?.cells.length > 0);
@@ -943,7 +975,7 @@ function validateAStarRiversComputeDistanceFromInnerSeas() {
   const innerSea = result.cells.find(cell => cell.id === "c-4-2");
   const innerAdjacentLand = result.cells.find(cell => cell.id === "c-5-2");
 
-  assert.equal(innerSea.seaKind, "INNER_SEA");
+  assert.equal(innerSea.seaKind, AREA_KIND_INNER_SEA);
   assert.equal(innerAdjacentLand.seaD, 1);
   assert.equal(innerAdjacentLand.toSea, innerSea);
 }
@@ -982,7 +1014,7 @@ function validateAStarRiverRejectsShortCoastMouthEdges() {
 
   const mouths = findMouthCandidates(map, [{
     id: "sea-0",
-    kind: "OPEN_SEA",
+    kind: AREA_KIND_OPEN_SEA,
     cells: [seaCell],
   }]);
 
@@ -1394,8 +1426,8 @@ function validateAStarRiversPersistSelectedRiver() {
   }, map);
 
   assert.equal(result.rivers.length, 1);
-  assert.equal(result.rivers[0].type, "MAIN");
-  assert.equal(result.rivers[0].role, "PRIMARY");
+  assert.equal(result.rivers[0].type, RIVER_TYPE_MAIN);
+  assert.equal(result.rivers[0].role, RIVER_ROLE_PRIMARY);
   assert.equal(result.rivers[0].id, "river-0");
   assert.ok(result.rivers[0].riverCells.length > 0);
   assert.ok(result.rivers[0].riverCells.every(cell => result.cells.includes(cell)));
@@ -1455,8 +1487,8 @@ function validateRiverTopologySplitsMainRiverCell() {
   const mainCells = [byId("c-1-1"), byId("c-2-1")];
   map.rivers = [{
     id: "river-0",
-    type: "MAIN",
-    role: "PRIMARY",
+    type: RIVER_TYPE_MAIN,
+    role: RIVER_ROLE_PRIMARY,
     order: 0,
     riverCells: mainCells,
     mouth: {cell: mainCells[0], seaCell: byId("c-0-1")},
@@ -1466,7 +1498,7 @@ function validateRiverTopologySplitsMainRiverCell() {
 
   const result = computeRiverTopology(settings, map);
   const children = result.cells.filter(cell => cell.parentCellId === "c-1-1");
-  const riverEdges = result.edges.filter(edge => edge.type === "river");
+  const riverEdges = result.edges.filter(edge => edge.type === EDGE_TYPE_RIVER);
 
   assert.equal(children.length, 2);
   assert.ok(!result.cells.includes(mainCells[0]));
@@ -1488,8 +1520,8 @@ function validateRiverTopologySplitsTributaryMergeCellInThree() {
   map.rivers = [
     {
       id: "river-0",
-      type: "MAIN",
-      role: "PRIMARY",
+      type: RIVER_TYPE_MAIN,
+      role: RIVER_ROLE_PRIMARY,
       order: 0,
       riverCells: mainCells,
       mouth: {cell: mainCells[0], seaCell: byId("c-2-4")},
@@ -1498,8 +1530,8 @@ function validateRiverTopologySplitsTributaryMergeCellInThree() {
     },
     {
       id: "river-1",
-      type: "TRIBUTARY",
-      role: "FIRST_TRIBUTARY",
+      type: RIVER_TYPE_TRIBUTARY,
+      role: RIVER_ROLE_FIRST_TRIBUTARY,
       order: 1,
       sourceRiverId: "river-0",
       riverCells: tributaryCells,
@@ -1511,8 +1543,8 @@ function validateRiverTopologySplitsTributaryMergeCellInThree() {
 
   const result = computeRiverTopology(settings, map);
   const mergeChildren = result.cells.filter(cell => cell.parentCellId === "c-2-2");
-  const junction = result.nodes.find(node => node.type === "river-junction");
-  const junctionEdges = result.edges.filter(edge => edge.type === "river" && (edge.start === junction || edge.end === junction));
+  const junction = result.nodes.find(node => node.type === NODE_TYPE_RIVER_JUNCTION);
+  const junctionEdges = result.edges.filter(edge => edge.type === EDGE_TYPE_RIVER && (edge.start === junction || edge.end === junction));
 
   assert.equal(mergeChildren.length, 3);
   assert.ok(junction);
@@ -1532,8 +1564,8 @@ function validateRiverTopologyRecomputesAreasAndColors() {
   const mainCells = [byId("c-1-1"), byId("c-2-1")];
   map.rivers = [{
     id: "river-0",
-    type: "MAIN",
-    role: "PRIMARY",
+    type: RIVER_TYPE_MAIN,
+    role: RIVER_ROLE_PRIMARY,
     order: 0,
     riverCells: mainCells,
     mouth: {cell: mainCells[0], seaCell: byId("c-0-1")},
@@ -1547,14 +1579,12 @@ function validateRiverTopologyRecomputesAreasAndColors() {
   const seaAreas = terrain.areas.filter(area => area.type === TERRAIN_SEA);
 
   assert.ok(landAreas.length >= 2);
-  assert.ok(landAreas.every(area => area.tint));
-  assert.ok(landAreas.every(area => area.tintOpacity === 0.2));
-  assert.ok(seaAreas.some(area => area.kind === "OPEN_SEA"));
-  assertLandAreaColorsAreUniqueWhenAvoidable(landAreas);
-  assertNeighboringLandAreasUseDifferentColors(landAreas);
+  assert.ok(landAreas.every(area => area.tint === undefined));
+  assert.ok(landAreas.every(area => area.tintOpacity === undefined));
+  assert.ok(seaAreas.some(area => area.kind === AREA_KIND_OPEN_SEA));
 }
 
-function validateRiverTopologyAreaTintDrawsOverlay() {
+function validateRiverTopologyAreaDoesNotDrawTintOverlay() {
   const {settings, map} = createGridTerrainFixture({
     width: 3,
     height: 3,
@@ -1564,8 +1594,8 @@ function validateRiverTopologyAreaTintDrawsOverlay() {
   const byId = id => map.cells.find(cell => cell.id === id);
   map.rivers = [{
     id: "river-0",
-    type: "MAIN",
-    role: "PRIMARY",
+    type: RIVER_TYPE_MAIN,
+    role: RIVER_ROLE_PRIMARY,
     order: 0,
     riverCells: [byId("c-1-1"), byId("c-2-1")],
     mouth: {cell: byId("c-1-1"), seaCell: byId("c-0-1")},
@@ -1574,12 +1604,11 @@ function validateRiverTopologyAreaTintDrawsOverlay() {
   }];
 
   const result = computeRiverTopology(settings, map);
-  const landArea = result.areas[0].areas.find(area => area.type === TERRAIN_LAND && area.tint);
+  const landArea = result.areas[0].areas.find(area => area.type === TERRAIN_LAND);
   const {calls, svg} = createSvgProbe();
   landArea.draw(svg);
 
-  assert.ok(calls.some(call => call.attrs.class === "area area-tint"));
-  assert.ok(calls.some(call => call.attrs["fill-opacity"] === "0.2"));
+  assert.ok(!calls.some(call => call.attrs.class === "area area-tint"));
 }
 
 function validateSmoothRiversRegisteredInPipeline() {
@@ -1606,8 +1635,8 @@ function validateSmoothRiversSplitsAndSamplesRiverEdges() {
   const mainCells = [byId("c-1-1"), byId("c-2-1")];
   map.rivers = [{
     id: "river-0",
-    type: "MAIN",
-    role: "PRIMARY",
+    type: RIVER_TYPE_MAIN,
+    role: RIVER_ROLE_PRIMARY,
     order: 0,
     riverCells: mainCells,
     mouth: {cell: mainCells[0], seaCell: byId("c-0-1")},
@@ -1616,15 +1645,15 @@ function validateSmoothRiversSplitsAndSamplesRiverEdges() {
   }];
 
   const topology = computeRiverTopology(settings, map);
-  const originalRiverEdges = topology.edges.filter(edge => edge.type === "river");
+  const originalRiverEdges = topology.edges.filter(edge => edge.type === EDGE_TYPE_RIVER);
   const expectedRiverEdgeCount = originalRiverEdges
     .map(edge => Math.round(H.edgeLength(edge) / 2 / TARGET_RIVER_SEGMENT_LENGTH) * 2)
     .reduce((sum, count) => sum + count, 0);
   assert.ok(originalRiverEdges.length > 0);
 
   const result = smoothRivers(settings, topology);
-  const fixedNodes = result.nodes.filter(node => node.flags?.has(FIXED_FLAG));
-  const riverEdges = result.edges.filter(edge => edge.type === "river");
+  const fixedNodes = result.nodes.filter(node => node.flags?.has(MAP_FLAG_FIXED));
+  const riverEdges = result.edges.filter(edge => edge.type === EDGE_TYPE_RIVER);
   const fixed = fixedNodes.find(node => node.smoothRiverSourceEdgeId === originalRiverEdges[0].id);
 
   assert.ok(fixed);
@@ -1649,8 +1678,8 @@ function validateSmoothRiversKeepsMergeNodesFixedWithoutMidpointSplit() {
   map.rivers = [
     {
       id: "river-0",
-      type: "MAIN",
-      role: "PRIMARY",
+      type: RIVER_TYPE_MAIN,
+      role: RIVER_ROLE_PRIMARY,
       order: 0,
       riverCells: mainCells,
       mouth: {cell: mainCells[0], seaCell: byId("c-2-4")},
@@ -1659,8 +1688,8 @@ function validateSmoothRiversKeepsMergeNodesFixedWithoutMidpointSplit() {
     },
     {
       id: "river-1",
-      type: "TRIBUTARY",
-      role: "FIRST_TRIBUTARY",
+      type: RIVER_TYPE_TRIBUTARY,
+      role: RIVER_ROLE_FIRST_TRIBUTARY,
       order: 1,
       sourceRiverId: "river-0",
       riverCells: tributaryCells,
@@ -1671,21 +1700,21 @@ function validateSmoothRiversKeepsMergeNodesFixedWithoutMidpointSplit() {
   ];
 
   const topology = computeRiverTopology(settings, map);
-  const junction = topology.nodes.find(node => node.type === "river-junction");
+  const junction = topology.nodes.find(node => node.type === NODE_TYPE_RIVER_JUNCTION);
   const junctionEdgeIds = topology.edges
-    .filter(edge => edge.type === "river" && (edge.start === junction || edge.end === junction))
+    .filter(edge => edge.type === EDGE_TYPE_RIVER && (edge.start === junction || edge.end === junction))
     .map(edge => edge.id);
 
   const result = smoothRivers(settings, topology);
   const fixedNodesFromJunctionEdges = result.nodes.filter(node => (
-    node.flags?.has(FIXED_FLAG)
+    node.flags?.has(MAP_FLAG_FIXED)
     && node.smoothRiverSourceEdgeId
     && junctionEdgeIds.includes(node.smoothRiverSourceEdgeId)
   ));
 
-  assert.ok(junction.flags.has(FIXED_FLAG));
+  assert.ok(junction.flags.has(MAP_FLAG_FIXED));
   assert.equal(fixedNodesFromJunctionEdges.length, 0);
-  assert.ok(result.edges.some(edge => edge.type === "river" && (edge.start === junction || edge.end === junction)));
+  assert.ok(result.edges.some(edge => edge.type === EDGE_TYPE_RIVER && (edge.start === junction || edge.end === junction)));
   assertGraphIdentity(result);
   assertRiverTopologyGraphIdentity(result);
 }
@@ -1693,19 +1722,19 @@ function validateSmoothRiversKeepsMergeNodesFixedWithoutMidpointSplit() {
 function validateSmoothRiversMovesInteriorNodesOnBezier() {
   const settings = new Settings();
   const map = new Map(settings);
-  const start = Node("a", 0, 0, "river");
-  const control = Node("b", 20, 20, "river");
-  const end = Node("c", 40, 0, "river");
+  const start = Node("a", 0, 0, NODE_TYPE_RIVER);
+  const control = Node("b", 20, 20, NODE_TYPE_RIVER);
+  const end = Node("c", 40, 0, NODE_TYPE_RIVER);
   map.nodes.push(start, control, end);
-  const first = Edge("r-0", start, control, "river", null, ["RIVER"]);
-  const second = Edge("r-1", control, end, "river", null, ["RIVER"]);
+  const first = Edge("r-0", start, control, EDGE_TYPE_RIVER, null, [MAP_FLAG_RIVER]);
+  const second = Edge("r-1", control, end, EDGE_TYPE_RIVER, null, [MAP_FLAG_RIVER]);
   first.riverId = "river-0";
   second.riverId = "river-0";
   map.edges.push(first, second);
   map.rivers = [{id: "river-0", topologyEdges: [first, second]}];
 
   const result = smoothRivers(settings, map);
-  const fixedNodes = result.nodes.filter(node => node.flags?.has(FIXED_FLAG));
+  const fixedNodes = result.nodes.filter(node => node.flags?.has(MAP_FLAG_FIXED));
 
   assert.equal(fixedNodes.length, 2);
   assert.equal(control.x, 20);
@@ -1727,7 +1756,7 @@ function validateSmoothRiversReplayFrames() {
     "Node movement",
     "Smoothed river",
   ]);
-  assert.equal(replay.frames.every(frame => frame.overlay?.type === "rivers"), true);
+  assert.equal(replay.frames.every(frame => frame.overlay?.type === OVERLAY_TYPE_RIVERS), true);
   assert.equal(replay.frames[1].overlay.points.some(point => point.fill === "#ef4444"), true);
   assert.equal(replay.frames[2].overlay.points.some(point => point.fill === "#8b5cf6"), true);
   assert.ok(replay.frames[3].overlay.paths.some(path => path.stroke === "#8b5cf6" && path.strokeWidth === 2 && path.d.includes(" Q ")));
@@ -1737,8 +1766,8 @@ function validateSmoothRiversReplayFrames() {
   const expected = smoothRivers(settings, cloneDeepKeepFunctions(map));
   const finalMap = replay.frames.at(-1).map;
   assert.deepEqual(
-    finalMap.nodes.map(node => [node.id, node.x, node.y, node.flags?.has(FIXED_FLAG) ?? false]),
-    expected.nodes.map(node => [node.id, node.x, node.y, node.flags?.has(FIXED_FLAG) ?? false])
+    finalMap.nodes.map(node => [node.id, node.x, node.y, node.flags?.has(MAP_FLAG_FIXED) ?? false]),
+    expected.nodes.map(node => [node.id, node.x, node.y, node.flags?.has(MAP_FLAG_FIXED) ?? false])
   );
   assert.deepEqual(
     finalMap.edges.map(edge => [edge.id, edge.start.id, edge.end.id, edge.type, edge.riverId ?? null]),
@@ -1762,16 +1791,16 @@ function validateSmoothRiversReplayHydrationDrawsOverlayPoints() {
 function createLongSmoothRiverFixture() {
   const settings = new Settings();
   const map = new Map(settings);
-  const start = Node("a", 0, 0, "river");
-  const control = Node("b", 40, 40, "river");
-  const end = Node("c", 80, 0, "river");
+  const start = Node("a", 0, 0, NODE_TYPE_RIVER);
+  const control = Node("b", 40, 40, NODE_TYPE_RIVER);
+  const end = Node("c", 80, 0, NODE_TYPE_RIVER);
   map.nodes.push(start, control, end);
-  const first = Edge("r-0", start, control, "river", null, ["RIVER"]);
-  const second = Edge("r-1", control, end, "river", null, ["RIVER"]);
+  const first = Edge("r-0", start, control, EDGE_TYPE_RIVER, null, [MAP_FLAG_RIVER]);
+  const second = Edge("r-1", control, end, EDGE_TYPE_RIVER, null, [MAP_FLAG_RIVER]);
   first.riverId = "river-0";
-  first.riverRole = "PRIMARY";
+  first.riverRole = RIVER_ROLE_PRIMARY;
   second.riverId = "river-0";
-  second.riverRole = "PRIMARY";
+  second.riverRole = RIVER_ROLE_PRIMARY;
   map.edges.push(first, second);
   map.rivers = [{id: "river-0", topologyEdges: [first, second]}];
   return {settings, map};
@@ -1800,7 +1829,7 @@ function validateSmoothCoastSeparatesDiagonalLandContact() {
   const sharedLandNodes = result.nodes.filter(node => landCells.filter(cell => cellUsesNode(cell, node)).length > 1);
 
   assert.equal(sharedLandNodes.length, 1);
-  assert.ok(result.edges.every(edge => !edge.flags?.has("COAST_GAP")));
+  assert.ok(result.edges.every(edge => !edge.flags?.has(MAP_FLAG_COAST_GAP)));
   assertGraphIdentity(result);
 }
 
@@ -1835,7 +1864,7 @@ function validateSmoothCoastSeparatesThreeNonNeighborLandCells() {
       );
     }
   }
-  assert.ok(result.edges.every(edge => !edge.flags?.has("COAST_GAP")));
+  assert.ok(result.edges.every(edge => !edge.flags?.has(MAP_FLAG_COAST_GAP)));
   assertGraphIdentity(result);
 }
 
@@ -1889,13 +1918,13 @@ function validateSmoothCoastReplayHydrationDrawsOverlay() {
 function createSingularCoastFixture(kind) {
   const settings = new Settings(`smooth-coast-${kind}`);
   const map = new Map(settings);
-  const center = Node("center", 0, 0, "fixture");
+  const center = Node("center", 0, 0, NODE_TYPE_TEST_FIXTURE);
   map.nodes.push(center);
   const cells = [];
   const edgeByKey = new globalThis.Map();
 
   function node(id, x, y) {
-    const created = Node(id, x, y, "fixture");
+    const created = Node(id, x, y, NODE_TYPE_TEST_FIXTURE);
     map.nodes.push(created);
     return created;
   }
@@ -1903,7 +1932,7 @@ function createSingularCoastFixture(kind) {
   function edgeBetween(a, b) {
     const key = [a.id, b.id].sort().join("|");
     if (!edgeByKey.has(key)) {
-      const edge = Edge(`fixture-edge-${edgeByKey.size}`, a, b, "fixture", null, [TERRAIN_COAST]);
+      const edge = Edge(`fixture-edge-${edgeByKey.size}`, a, b, EDGE_TYPE_TEST_FIXTURE, null, [TERRAIN_COAST]);
       edgeByKey.set(key, edge);
       map.edges.push(edge);
     }
@@ -1968,30 +1997,6 @@ function assertRiverTopologyGraphIdentity(map) {
     if (river.mouth?.cell) assert.ok(map.cells.includes(river.mouth.cell), `river ${river.id} mouth.cell is detached`);
     if (river.mouth?.seaCell) assert.ok(map.cells.includes(river.mouth.seaCell), `river ${river.id} mouth.seaCell is detached`);
     if (river.mouth?.riverCell) assert.ok(map.cells.includes(river.mouth.riverCell), `river ${river.id} mouth.riverCell is detached`);
-  }
-}
-
-function assertNeighboringLandAreasUseDifferentColors(landAreas) {
-  const areaByCell = new globalThis.Map();
-  landAreas.forEach(area => area.cells.forEach(cell => areaByCell.set(cell, area)));
-
-  for (const area of landAreas) {
-    for (const cell of area.cells) {
-      for (const edge of cell.edges) {
-        const neighbor = edge.leftCell === cell ? edge.rightCell : edge.rightCell === cell ? edge.leftCell : null;
-        const neighborArea = areaByCell.get(neighbor);
-        if (!neighborArea || neighborArea === area) continue;
-        assert.notEqual(area.tint, neighborArea.tint);
-      }
-    }
-  }
-}
-
-function assertLandAreaColorsAreUniqueWhenAvoidable(landAreas) {
-  const colors = landAreas.map(area => area.tint);
-  const uniqueColors = new Set(colors);
-  if (landAreas.length <= 8) {
-    assert.equal(uniqueColors.size, landAreas.length);
   }
 }
 
@@ -2060,21 +2065,21 @@ function validateTributariesAddAdjacentBankRiver() {
     rng: settings.createStepRng("Tributaries"),
   }, map);
   const mainRiver = result.rivers[0];
-  const tributaries = result.rivers.filter(river => river.type === "TRIBUTARY");
+  const tributaries = result.rivers.filter(river => river.type === RIVER_TYPE_TRIBUTARY);
 
   assert.ok(tributaries.length >= 1);
   assert.ok(tributaries.length <= 2);
 
   const tributary = tributaries[0];
-  assert.equal(mainRiver.role, "PRIMARY");
-  assert.equal(tributary.role, "FIRST_TRIBUTARY");
+  assert.equal(mainRiver.role, RIVER_ROLE_PRIMARY);
+  assert.equal(tributary.role, RIVER_ROLE_FIRST_TRIBUTARY);
   assert.equal(tributary.sourceRiverId, mainRiver.id);
   assert.ok(tributary.riverCells.every(cell => result.cells.includes(cell)));
   assert.equal(tributary.originalMouth, tributary.mouth.cell);
   assert.ok(mainRiver.riverCells.includes(tributary.mouth.riverCell));
   assert.ok(H.cellsEdge(tributary.mouth.cell, tributary.mouth.riverCell));
   assert.ok(tributary.mouth.cell.seaD >= 1);
-  assert.ok(tributary.exit.edges.some(edge => edge.flags.has("Boundary")));
+  assert.ok(tributary.exit.edges.some(edge => edge.flags.has(MAP_FLAG_BOUNDARY)));
   assert.ok(tributary.exit.seaD >= 8);
   assertNoRepeatedRiverCells(tributary);
   assert.equal(tributary.sourceExitDistance, H.distance(H.cellCentroid(tributary.exit), H.cellCentroid(mainRiver.exit)));
@@ -2106,7 +2111,7 @@ function validateAStarRiverDrawsStraightPath() {
   };
   const mouthEdge = H.cellsEdge(byId("c-0-1"), byId("c-1-1"));
   const riverEdge = H.cellsEdge(byId("c-1-1"), byId("c-2-1"));
-  const exitEdge = byId("c-2-1").edges.find(edge => edge.flags?.has("Boundary"));
+  const exitEdge = byId("c-2-1").edges.find(edge => edge.flags?.has(MAP_FLAG_BOUNDARY));
   const mouthMid = H.midpoint(mouthEdge.start, mouthEdge.end);
   const riverMid = H.midpoint(riverEdge.start, riverEdge.end);
   const exitMid = H.midpoint(exitEdge.start, exitEdge.end);
@@ -2174,7 +2179,7 @@ function validateAStarRiversReplayFrames() {
     "Selected river",
     "Meander refinement",
   ]);
-  assert.ok(replay.frames.every(frame => frame.overlay?.type === "rivers"));
+  assert.ok(replay.frames.every(frame => frame.overlay?.type === OVERLAY_TYPE_RIVERS));
   assert.ok(replay.frames[0].overlay.polygons.length > 0);
   assert.ok(replay.frames[1].overlay.arrows.length > replay.frames[0].overlay.arrows.length);
   assert.ok(replay.frames[1].overlay.arrows.every(arrow => arrow.stroke === "black"));
@@ -2470,7 +2475,7 @@ validateRiverTopologyRegisteredInPipeline();
 validateRiverTopologySplitsMainRiverCell();
 validateRiverTopologySplitsTributaryMergeCellInThree();
 validateRiverTopologyRecomputesAreasAndColors();
-validateRiverTopologyAreaTintDrawsOverlay();
+validateRiverTopologyAreaDoesNotDrawTintOverlay();
 validateSmoothRiversRegisteredInPipeline();
 validateSmoothRiversSplitsAndSamplesRiverEdges();
 validateSmoothRiversKeepsMergeNodesFixedWithoutMidpointSplit();

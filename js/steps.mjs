@@ -147,7 +147,7 @@ export const steps = [
     explanation: (settings, stepResult) => [
       `River topology reads <em>map.rivers</em> from the previous steps and promotes those visual routes into real edges and cells.`,
       `The step preserves graph identity by splitting existing cell boundary edges at river entry and exit points, then replacing each traversed cell with canonical child cells that reference canonical nodes and edges.`,
-      `Land areas are rebuilt as connected components separated by river edges, coast, sea, and map boundaries. Each land area keeps the existing land-area rendering path and receives a deterministic translucent tint.`,
+      `Land areas are rebuilt as connected components separated by river edges, coast, sea, and map boundaries. They keep the same terrain fill so land edges remain the visible separation signal.`,
     ],
     renderExplanationExtras: null,
   },

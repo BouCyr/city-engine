@@ -3,10 +3,21 @@ import {Area, AreaGroup, drawArea} from "./data/area.mjs";
 import {Map as CityMap} from "./data/map.mjs";
 import {Settings} from "./data/settings.mjs";
 import {steps} from "./steps.mjs";
-
-const TERRAIN_SEA = "SEA";
-const TERRAIN_LAND = "LAND";
-const TERRAIN_COAST = "COAST";
+import {
+  EDGE_TYPE_COAST,
+  EDGE_TYPE_LAND,
+  EDGE_TYPE_RIVER,
+  EDGE_TYPE_SEA,
+  OVERLAY_TYPE_COAST_CENTROIDS,
+  OVERLAY_TYPE_COAST_FIELD,
+  OVERLAY_TYPE_GATHER,
+  OVERLAY_TYPE_RIVERS,
+  RIVER_ROLE_PRIMARY,
+  TERRAIN_CLASS_LAND,
+  TERRAIN_CLASS_SEA,
+  TERRAIN_LAND,
+  TERRAIN_SEA,
+} from "./constants.mjs";
 const GATHER_OVERLAY_COMPETITOR_LIMIT = 6;
 const EPSILON = 1e-7;
 
@@ -91,6 +102,8 @@ export function serializeMap(map) {
       endId: edge.end?.id ?? null,
       type: edge.type,
       flags: Array.from(edge.flags ?? []),
+      riverId: edge.riverId ?? null,
+      riverRole: edge.riverRole ?? null,
       leftCellId: edge.leftCell?.id ?? null,
       rightCellId: edge.rightCell?.id ?? null,
       draw: edge.draw !== null,
@@ -163,9 +176,11 @@ export function hydrateMap(data) {
       end,
       type: edgeData.type,
       flags: new Set(edgeData.flags ?? []),
+      riverId: edgeData.riverId ?? null,
+      riverRole: edgeData.riverRole ?? null,
       leftCell: null,
       rightCell: null,
-      draw: edgeData.draw ? drawForEdge(edgeData.flags ?? []) : null,
+      draw: edgeData.draw ? drawForEdge(edgeData.type) : null,
     };
     start?.edges?.add(edge);
     end?.edges?.add(edge);
@@ -235,19 +250,19 @@ export function hydrateOverlayDraw(overlay) {
     return null;
   }
 
-  if (overlay.type === "gather") {
+  if (overlay.type === OVERLAY_TYPE_GATHER) {
     return createGatherOverlayDraw(overlay);
   }
 
-  if (overlay.type === "coast-field") {
+  if (overlay.type === OVERLAY_TYPE_COAST_FIELD) {
     return createCoastFieldOverlayDraw(overlay);
   }
 
-  if (overlay.type === "coast-centroids") {
+  if (overlay.type === OVERLAY_TYPE_COAST_CENTROIDS) {
     return createCoastCentroidOverlayDraw(overlay);
   }
 
-  if (overlay.type === "rivers") {
+  if (overlay.type === OVERLAY_TYPE_RIVERS) {
     return createRiversOverlayDraw(overlay);
   }
 
@@ -283,14 +298,27 @@ function drawTerrainEdge(svg) {
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
   path.setAttribute("d", `M ${this.start.x} ${this.start.y} L ${this.end.x} ${this.end.y}`);
 
-  if (this.flags.has(TERRAIN_COAST)) {
+  if (this.type === EDGE_TYPE_COAST) {
     path.setAttribute("class", "edge terrain-coast");
-  } else if (this.flags.has(TERRAIN_SEA)) {
+  } else if (this.type === EDGE_TYPE_SEA) {
     path.setAttribute("class", "edge terrain-sea");
   } else {
     path.setAttribute("class", "edge terrain-land");
   }
 
+  layer.appendChild(path);
+}
+
+function drawRiverEdge(svg) {
+  const layer = svg.getElementById("edges");
+  if (!layer) return;
+
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", `M ${this.start.x} ${this.start.y} L ${this.end.x} ${this.end.y}`);
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "var(--sea-edge)");
+  path.setAttribute("stroke-width", this.riverRole === RIVER_ROLE_PRIMARY ? "12" : "8");
+  path.setAttribute("stroke-linecap", "round");
   layer.appendChild(path);
 }
 
@@ -314,14 +342,18 @@ function drawTerrainCell(svg) {
 
   const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
   polygon.setAttribute("points", orderedCellPoints(this).map((point) => `${point.x},${point.y}`).join(" "));
-  polygon.setAttribute("class", `cell terrain-${this.type === TERRAIN_SEA ? "sea" : "land"}`);
+  polygon.setAttribute("class", `cell terrain-${this.type === TERRAIN_SEA ? TERRAIN_CLASS_SEA : TERRAIN_CLASS_LAND}`);
   layer.appendChild(polygon);
 }
 
-function drawForEdge(flags) {
-  return flags.includes(TERRAIN_SEA)
-    || flags.includes(TERRAIN_LAND)
-    || flags.includes(TERRAIN_COAST)
+function drawForEdge(type) {
+  if (type === EDGE_TYPE_RIVER) {
+    return drawRiverEdge;
+  }
+
+  return type === EDGE_TYPE_SEA
+    || type === EDGE_TYPE_LAND
+    || type === EDGE_TYPE_COAST
     ? drawTerrainEdge
     : drawDefaultEdge;
 }

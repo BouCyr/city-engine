@@ -4,6 +4,16 @@ import {hydrateReplay, plainSettings, serializeMap} from "./replay-service.mjs";
 import {areaBoundaryPath} from "./data/area.mjs";
 import {orderedCellPoints} from "./data/cell.mjs";
 import {createDefaultSettings, renderStepSettingsForm} from "./ui/settings-panel.mjs";
+import {
+  EDGE_TYPE_COAST,
+  EDGE_TYPE_RIVER,
+  EDGE_TYPE_SEA,
+  NODE_TYPE_COAST,
+  NODE_TYPE_POI,
+  TERRAIN_COAST,
+  TERRAIN_LAND,
+  TERRAIN_SEA,
+} from "./constants.mjs";
 
 export let settings = createDefaultSettings();
 export let map;
@@ -47,7 +57,7 @@ const SAMPLE_ATTRS = [
 ];
 
 const mapDisplayState = {
-  hiddenLayers: new Set(),
+  hiddenLayers: new Set(["cells"]),
   hiddenTypes: new Set(),
   debugTypes: new Set(),
 };
@@ -949,13 +959,20 @@ function toggleEntityLayer(layerId, typeNames) {
 
 function toggleEntityType(layerId, typeName) {
   const key = typeKey(layerId, typeName);
-  mapDisplayState.hiddenLayers.delete(layerId);
+  const visible = isEntityTypeVisible(layerId, typeName);
 
-  if (renderedTypeKeys.has(key)) {
-    toggleSet(mapDisplayState.hiddenTypes, key);
+  if (visible) {
+    if (renderedTypeKeys.has(key)) {
+      mapDisplayState.hiddenTypes.add(key);
+    } else {
+      mapDisplayState.debugTypes.delete(key);
+    }
   } else {
-    toggleSet(mapDisplayState.debugTypes, key);
+    mapDisplayState.hiddenLayers.delete(layerId);
     mapDisplayState.hiddenTypes.delete(key);
+    if (!renderedTypeKeys.has(key)) {
+      mapDisplayState.debugTypes.add(key);
+    }
   }
 
   renderCurrentMap();
@@ -1020,7 +1037,7 @@ function drawDebugEdges(displayMap, typeName) {
     path.setAttribute("d", `M ${edge.start.x} ${edge.start.y} L ${edge.end.x} ${edge.end.y}`);
     path.setAttribute("fill", "none");
     path.setAttribute("stroke", colorForType(typeName, "edges"));
-    path.setAttribute("stroke-width", edge.type === "river" ? "7" : "2");
+    path.setAttribute("stroke-width", edge.type === EDGE_TYPE_RIVER ? "7" : "2");
     tagDebugElement(path, "edges", typeName);
     layer.appendChild(path);
   }
@@ -1082,10 +1099,10 @@ function tagDebugElement(element, layerId, typeName) {
 }
 
 function colorForType(typeName, layerId) {
-  if (typeName === "SEA" || typeName === "terrain-sea") return "var(--sea-fill)";
-  if (typeName === "LAND" || typeName === "terrain-land") return "var(--land-fill)";
-  if (typeName === "COAST" || typeName === "coast" || typeName === "terrain-coast") return "var(--coast-edge)";
-  if (typeName === "river") return "var(--sea-edge)";
+  if (typeName === TERRAIN_SEA || typeName === EDGE_TYPE_SEA || typeName === "terrain-sea") return "var(--sea-fill)";
+  if (typeName === TERRAIN_LAND || typeName === "terrain-land") return "var(--land-fill)";
+  if (typeName === TERRAIN_COAST || typeName === NODE_TYPE_COAST || typeName === EDGE_TYPE_COAST || typeName === "terrain-coast") return "var(--coast-edge)";
+  if (typeName === EDGE_TYPE_RIVER) return "var(--sea-edge)";
   if (layerId === "nodes") return "#8b5cf6";
   if (layerId === "edges") return "var(--land-edge)";
   return colorFromString(String(typeName ?? layerId));
@@ -1101,7 +1118,7 @@ function colorFromString(value) {
 
 function formatTypeLabel(type) {
   const value = String(type ?? "unknown");
-  if (value === "POI") return "POI";
+  if (value === NODE_TYPE_POI) return NODE_TYPE_POI;
 
   return value
     .replace(/^terrain-/, "")

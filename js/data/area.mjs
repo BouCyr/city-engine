@@ -1,3 +1,4 @@
+import {TERRAIN_CLASS_LAND, TERRAIN_CLASS_SEA, TERRAIN_LAND, TERRAIN_SEA} from "../constants.mjs";
 import {orderedCellPoints} from "./cell.mjs";
 
 export function AreaGroup(name, areas = []) {
@@ -33,15 +34,6 @@ export function drawArea(svg, groupElement = null) {
   }
   layer.appendChild(path);
 
-  if (this.tint) {
-    const tint = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    tint.setAttribute("d", pathData);
-    tint.setAttribute("class", "area area-tint");
-    tint.setAttribute("fill", this.tint);
-    tint.setAttribute("fill-opacity", String(this.tintOpacity ?? 0.2));
-    tint.setAttribute("fill-rule", "evenodd");
-    layer.appendChild(tint);
-  }
 }
 
 export function areaBoundaryPath(cells) {
@@ -111,12 +103,12 @@ function segmentsToPath(segments) {
 }
 
 function terrainClass(type) {
-  return type === "SEA" ? "sea" : "land";
+  return type === TERRAIN_SEA ? TERRAIN_CLASS_SEA : TERRAIN_CLASS_LAND;
 }
 
 function areaInnerBorderFilterId(type) {
-  if (type === "SEA") return "area-inner-border-sea";
-  if (type === "LAND") return "area-inner-border-land";
+  if (type === TERRAIN_SEA) return "area-inner-border-sea";
+  if (type === TERRAIN_LAND) return "area-inner-border-land";
   return null;
 }
 
