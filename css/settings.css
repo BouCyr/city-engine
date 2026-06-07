@@ -117,7 +117,8 @@
   color: color-mix(in srgb, var(--text-color) 70%, transparent);
 }
 
-.setting-help .setting-reset {
+.setting-help .setting-reset,
+.setting-help .setting-random-seed {
   font: inherit;
   border: 0;
   margin: 0;
@@ -129,12 +130,14 @@
   opacity: 0.55;
 }
 
-.setting-help .setting-reset:hover {
+.setting-help .setting-reset:hover,
+.setting-help .setting-random-seed:hover {
   opacity: 1;
   color: var(--accent-color);
 }
 
-.setting-help .setting-reset:focus-visible {
+.setting-help .setting-reset:focus-visible,
+.setting-help .setting-random-seed:focus-visible {
   opacity: 1;
   color: var(--accent-color);
 }

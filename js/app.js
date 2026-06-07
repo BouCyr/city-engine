@@ -9,7 +9,11 @@ import {
   EDGE_TYPE_RIVER,
   EDGE_TYPE_SEA,
   NODE_TYPE_COAST,
+  NODE_TYPE_CROSSING,
+  NODE_TYPE_LAND,
   NODE_TYPE_POI,
+  NODE_TYPE_RIVER,
+  NODE_TYPE_RIVER_JUNCTION,
   TERRAIN_COAST,
   TERRAIN_LAND,
   TERRAIN_SEA,
@@ -37,6 +41,9 @@ const ZOOM_IN_FACTOR = 0.9;
 const ZOOM_OUT_FACTOR = 1.1;
 const MIN_VIEW_RATIO = 0.12;
 const SVG_NS = "http://www.w3.org/2000/svg";
+const DEFAULT_NODE_RADIUS = 6;
+const TERRAIN_NODE_RADIUS = DEFAULT_NODE_RADIUS / 2;
+const CROSSING_NODE_COLOR = "#6f7f3f";
 const ENTITY_METRICS = [
   {label: "Nodes", key: "nodes", layerId: "nodes"},
   {label: "Edges", key: "edges", layerId: "edges"},
@@ -60,6 +67,7 @@ const mapDisplayState = {
   hiddenLayers: new Set(["cells"]),
   hiddenTypes: new Set(),
   debugTypes: new Set(),
+  defaultNodeTypes: new Set(),
 };
 
 const camera = {
@@ -98,6 +106,7 @@ function renderCurrentMap() {
   displayMap.clear(svgDomElt);
   displayMap.draw(svgDomElt);
   renderedTypeKeys = collectRenderedTypeKeys(svgDomElt);
+  seedDefaultNodeDisplayTypes(displayMap);
   drawDebugDisplayEntities(displayMap);
   applyMapDisplayVisibility();
   renderStepDetails(steps[index], result);
@@ -871,7 +880,7 @@ function createSampleCircle(source, typeName) {
   copySampleAttrs(source, circle);
   circle.setAttribute("cx", "28");
   circle.setAttribute("cy", "9");
-  circle.setAttribute("r", "5");
+  circle.setAttribute("r", String(nodeRadiusForType(typeName, 5)));
   if (!circle.getAttribute("fill") && !circle.getAttribute("class")) {
     circle.setAttribute("fill", colorForType(typeName, "nodes"));
   }
@@ -934,6 +943,24 @@ function isEntityTypeVisible(layerId, typeName) {
   const key = typeKey(layerId, typeName);
   if (mapDisplayState.hiddenLayers.has(layerId) || mapDisplayState.hiddenTypes.has(key)) return false;
   return renderedTypeKeys.has(key) || mapDisplayState.debugTypes.has(key);
+}
+
+function seedDefaultNodeDisplayTypes(displayMap) {
+  for (const node of displayMap?.nodes ?? []) {
+    if (!node?.type) continue;
+
+    const key = typeKey("nodes", node.type);
+    if (mapDisplayState.defaultNodeTypes.has(key)) continue;
+
+    mapDisplayState.defaultNodeTypes.add(key);
+    if (node.type === NODE_TYPE_CROSSING) {
+      if (!renderedTypeKeys.has(key)) {
+        mapDisplayState.debugTypes.add(key);
+      }
+    } else {
+      mapDisplayState.hiddenTypes.add(key);
+    }
+  }
 }
 
 function toggleEntityLayer(layerId, typeNames) {
@@ -1002,6 +1029,10 @@ function applyMapDisplayVisibility() {
   for (const element of elements) {
     const layerId = element.getAttribute("data-legend-layer");
     const typeName = element.getAttribute("data-legend-type");
+    if (layerId === "overlay") {
+      element.classList?.remove("legend-hidden");
+      continue;
+    }
     element.classList?.toggle(
       "legend-hidden",
       mapDisplayState.hiddenLayers.has(layerId) || mapDisplayState.hiddenTypes.has(typeKey(layerId, typeName))
@@ -1018,7 +1049,7 @@ function drawDebugNodes(displayMap, typeName) {
     const circle = document.createElementNS(SVG_NS, "circle");
     circle.setAttribute("cx", node.x);
     circle.setAttribute("cy", node.y);
-    circle.setAttribute("r", "6");
+    circle.setAttribute("r", String(nodeRadiusForType(typeName)));
     circle.setAttribute("fill", colorForType(typeName, "nodes"));
     circle.setAttribute("stroke", "var(--bg-color)");
     circle.setAttribute("stroke-width", "2");
@@ -1099,13 +1130,32 @@ function tagDebugElement(element, layerId, typeName) {
 }
 
 function colorForType(typeName, layerId) {
+  if (layerId === "nodes") {
+    if (typeName === NODE_TYPE_COAST) return "var(--coast-edge)";
+    if (typeName === NODE_TYPE_RIVER || typeName === NODE_TYPE_RIVER_JUNCTION) return "var(--sea-edge)";
+    if (typeName === NODE_TYPE_LAND) return "var(--land-edge)";
+    if (typeName === NODE_TYPE_CROSSING) return CROSSING_NODE_COLOR;
+    return "#8b5cf6";
+  }
   if (typeName === TERRAIN_SEA || typeName === EDGE_TYPE_SEA || typeName === "terrain-sea") return "var(--sea-fill)";
   if (typeName === TERRAIN_LAND || typeName === "terrain-land") return "var(--land-fill)";
   if (typeName === TERRAIN_COAST || typeName === NODE_TYPE_COAST || typeName === EDGE_TYPE_COAST || typeName === "terrain-coast") return "var(--coast-edge)";
   if (typeName === EDGE_TYPE_RIVER) return "var(--sea-edge)";
-  if (layerId === "nodes") return "#8b5cf6";
   if (layerId === "edges") return "var(--land-edge)";
   return colorFromString(String(typeName ?? layerId));
+}
+
+function nodeRadiusForType(typeName, baseRadius = DEFAULT_NODE_RADIUS) {
+  if (!isTerrainNodeType(typeName)) return baseRadius;
+  return baseRadius === DEFAULT_NODE_RADIUS ? TERRAIN_NODE_RADIUS : baseRadius / 2;
+}
+
+function isTerrainNodeType(typeName) {
+  return typeName === NODE_TYPE_COAST
+    || typeName === NODE_TYPE_RIVER
+    || typeName === NODE_TYPE_RIVER_JUNCTION
+    || typeName === NODE_TYPE_LAND
+    || typeName === NODE_TYPE_CROSSING;
 }
 
 function colorFromString(value) {

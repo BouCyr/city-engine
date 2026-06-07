@@ -1,6 +1,8 @@
 import {Settings, SETTING_GROUPS} from "../data/settings.mjs";
 
 const defaultSettings = new Settings();
+const BASE32_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
+const RANDOM_SEED_LENGTH = 8;
 
 export function createDefaultSettings() {
   return new Settings(defaultSettings.seed);
@@ -41,8 +43,8 @@ function createElement(tagName, className) {
   return element;
 }
 
-function cloneSettings(source) {
-  const clone = new Settings(source.seed);
+function cloneSettings(source, seed = source.seed) {
+  const clone = new Settings(seed);
   SETTING_GROUPS.forEach((group) => {
     group.settings.forEach((definition) => {
       if (definition.path !== "seed") {
@@ -130,8 +132,21 @@ function createSettingHelp(definition, editable = true) {
   help.append(
     document.createTextNode(`${definition.help} (`),
     reset,
-    document.createTextNode(")"),
   );
+
+  if (definition.path === "seed") {
+    const random = document.createElement("button");
+    random.type = "button";
+    random.className = "setting-random-seed";
+    random.dataset.randomSeedPath = definition.path;
+    random.textContent = "random";
+    help.append(
+      document.createTextNode(", "),
+      random,
+    );
+  }
+
+  help.append(document.createTextNode(")"));
 
   return help;
 }
@@ -183,7 +198,7 @@ export function settingsForStep(stepTitle) {
     .filter((definition) => definition.ownerStep === stepTitle || (definition.usedBySteps ?? []).includes(stepTitle))
     .map((definition) => ({
       definition,
-      editable: definition.ownerStep === stepTitle,
+      editable: definition.ownerStep === stepTitle || definition.path === "seed",
       sourceStep: definition.ownerStep,
     }));
 }
@@ -296,12 +311,37 @@ function handleSettingsInput(panel, event, onChange) {
   const definition = getDefinition(control.dataset.settingPath);
   if (!definition) return;
 
-  const nextSettings = cloneSettings(panel.__settingsSource ?? defaultSettings);
+  const sourceSettings = panel.__settingsSource ?? defaultSettings;
+  const seed = definition.path === "seed"
+    ? readSettingFromControls(panel, definition)
+    : sourceSettings.seed;
+  const nextSettings = cloneSettings(sourceSettings, seed);
   setSettingValue(nextSettings, definition.path, readSettingFromControls(panel, definition));
   onChange(nextSettings);
 }
 
+function randomBase32Word(length = RANDOM_SEED_LENGTH) {
+  const values = new Uint8Array(length);
+  globalThis.crypto?.getRandomValues?.(values);
+  if (!globalThis.crypto?.getRandomValues) {
+    for (let index = 0; index < values.length; index += 1) {
+      values[index] = Math.floor(Math.random() * BASE32_ALPHABET.length);
+    }
+  }
+  return Array.from(values, (value) => BASE32_ALPHABET[value % BASE32_ALPHABET.length]).join("");
+}
+
 function handleSettingsReset(panel, event, onChange) {
+  const randomButton = event.target.closest("[data-random-seed-path]");
+  if (randomButton) {
+    const path = randomButton.dataset.randomSeedPath;
+    const seed = randomBase32Word();
+    writeSettingToControls(panel, path, seed);
+    const nextSettings = cloneSettings(panel.__settingsSource ?? defaultSettings, seed);
+    onChange(nextSettings);
+    return;
+  }
+
   const button = event.target.closest("[data-reset-path]");
   if (!button) {
     return;
@@ -312,7 +352,9 @@ function handleSettingsReset(panel, event, onChange) {
   const definition = getDefinition(path);
   if (!definition) return;
 
-  const nextSettings = cloneSettings(panel.__settingsSource ?? defaultSettings);
+  const sourceSettings = panel.__settingsSource ?? defaultSettings;
+  const seed = path === "seed" ? getSettingValue(defaultSettings, path) : sourceSettings.seed;
+  const nextSettings = cloneSettings(sourceSettings, seed);
   setSettingValue(nextSettings, path, getSettingValue(defaultSettings, path));
   onChange(nextSettings);
 }

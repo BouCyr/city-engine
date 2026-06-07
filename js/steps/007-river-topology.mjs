@@ -96,12 +96,12 @@ function collectSplitSpecs(map, rivers) {
 
     const mergeSpec = ensureSplitSpec(specs, mergeCell);
     const tributaryEntry = midpointBetweenCells(mergeCell, firstTributaryCell);
-    if (tributaryEntry) {
-      const closestPrimaryPoint = findClosestPrimaryPointForTributary(mainRiver, mergeCell, tributaryEntry);
-      if (closestPrimaryPoint && !mergeSpec.closestPrimaryPointKey) {
-        mergeSpec.closestPrimaryPointKey = pointKey(closestPrimaryPoint);
-      }
+    const downstreamPoint = downstreamPointForFirstRiverInCell(rivers, mergeCell);
+    if (downstreamPoint && !mergeSpec.preferredMergePointKey) {
+      mergeSpec.preferredMergePointKey = pointKey(downstreamPoint);
+    }
 
+    if (tributaryEntry) {
       addBoundaryPoint(mergeSpec, tributaryEntry, tributary);
     }
 
@@ -125,24 +125,14 @@ function collectSplitSpecs(map, rivers) {
   return specs;
 }
 
-function findClosestPrimaryPointForTributary(mainRiver, mergeCell, tributaryEntry) {
-  if (!mainRiver || !tributaryEntry) return null;
+function downstreamPointForFirstRiverInCell(rivers, mergeCell) {
+  for (const river of rivers) {
+    const index = (river.riverCells ?? []).indexOf(mergeCell);
+    if (index < 0) continue;
+    return riverEntryPoint(river, index);
+  }
 
-  const mainIndex = (mainRiver.riverCells ?? []).indexOf(mergeCell);
-  if (mainIndex < 0) return null;
-
-  const candidates = [];
-  const mainEntry = riverEntryPoint(mainRiver, mainIndex);
-  const mainExit = riverExitPoint(mainRiver, mainIndex);
-  if (mainEntry) candidates.push(mainEntry);
-  if (mainExit) candidates.push(mainExit);
-
-  const uniqueCandidates = uniquePoints(candidates.filter(Boolean));
-  if (uniqueCandidates.length === 0) return null;
-
-  return uniqueCandidates.reduce((closest, candidate) => {
-    return H.distance(closest, tributaryEntry) <= H.distance(candidate, tributaryEntry) ? closest : candidate;
-  });
+  return null;
 }
 
 function ensureSplitSpec(specs, cell) {
@@ -151,6 +141,7 @@ function ensureSplitSpec(specs, cell) {
       boundaryPoints: new globalThis.Map(),
       rivers: new Set(),
       forceJunction: false,
+      preferredMergePointKey: null,
     });
   }
   return specs.get(cell);
@@ -298,7 +289,7 @@ function splitCellAroundJunction(map, cell, boundaryNodes, spec) {
 }
 
 function resolveJunctionCenter(map, cell, spec, indexedNodes) {
-  const preferredKey = spec.closestPrimaryPointKey;
+  const preferredKey = spec.preferredMergePointKey;
   if (preferredKey) {
     const directMatch = indexedNodes.find((entry) => pointKey(entry.node) === preferredKey);
     if (directMatch) {
@@ -499,18 +490,6 @@ function nodesBetween(nodes, startIndex, endIndex) {
 
 function uniqueNodes(nodes) {
   return nodes.filter((node, index) => nodes.indexOf(node) === index);
-}
-
-function uniquePoints(points) {
-  const seen = new Set();
-  const result = [];
-  for (const point of points) {
-    const key = pointKey(point);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(point);
-  }
-  return result;
 }
 
 function uniqueCells(cells) {

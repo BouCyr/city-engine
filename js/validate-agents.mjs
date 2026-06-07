@@ -287,11 +287,14 @@ function validateStepSettingsOwnershipAndReadOnlySharing() {
   const initializationSettings = settingsForStep("Initialization");
   const tributarySettings = settingsForStep("Tributaries");
   const seed = initializationSettings.find(({definition}) => definition.path === "seed");
+  const tributarySeed = tributarySettings.find(({definition}) => definition.path === "seed");
   const riverMaxCompute = tributarySettings.find(({definition}) => definition.path === "rivers.maxComputeMs");
   const tributaryMaxCompute = tributarySettings.find(({definition}) => definition.path === "tributaries.maxComputeMs");
 
   assert.equal(seed?.editable, true);
   assert.equal(seed?.sourceStep, "Initialization");
+  assert.equal(tributarySeed?.editable, true);
+  assert.equal(tributarySeed?.sourceStep, "Initialization");
   assert.equal(riverMaxCompute?.editable, false);
   assert.equal(riverMaxCompute?.sourceStep, "Rivers");
   assert.equal(tributaryMaxCompute?.editable, true);
@@ -299,7 +302,7 @@ function validateStepSettingsOwnershipAndReadOnlySharing() {
 
   for (const step of steps) {
     for (const entry of settingsForStep(step.title)) {
-      assert.equal(entry.editable, entry.definition.ownerStep === step.title);
+      assert.equal(entry.editable, entry.definition.ownerStep === step.title || entry.definition.path === "seed");
     }
   }
 }
@@ -1548,6 +1551,8 @@ function validateRiverTopologySplitsTributaryMergeCellInThree() {
 
   assert.equal(mergeChildren.length, 3);
   assert.ok(junction);
+  assert.equal(junction.x, 250);
+  assert.equal(junction.y, 300);
   assert.equal(junctionEdges.length, 3);
   assert.ok(mergeChildren.every(cell => cell.type === TERRAIN_LAND));
   assertRiverTopologyGraphIdentity(result);

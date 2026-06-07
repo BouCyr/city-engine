@@ -851,7 +851,7 @@ export function drawRivers(candidates, map, color = RIVER_COLOR) {
   const prevOverlayDraw = map.drawOverlay;
   map.drawOverlay = (svg) => {
     if (prevOverlayDraw) prevOverlayDraw(svg);
-    const layer = svg.getElementById("cells");
+    const layer = svg.getElementById("overlay");
     if (!layer) return;
     (candidates ?? []).forEach((candidate, index) => appendRiverPath(layer, paths[index], color, "1", riverStrokeWidth(candidate)));
   };
