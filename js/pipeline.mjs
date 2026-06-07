@@ -1,6 +1,7 @@
 import {steps} from "./steps.mjs";
 import {Map} from "./data/map.mjs";
 import {cloneDeepKeepFunctions} from "./data/clone.mjs";
+import {Area, AreaGroup} from "./data/area.mjs";
 
 export function runPipeline(settings, initialMap = new Map(settings), registeredSteps = steps) {
   let map = initialMap;
@@ -19,6 +20,8 @@ export function runPipeline(settings, initialMap = new Map(settings), registered
     const startedAt = now();
     const stepMap = step.process(stepSettings, cloneDeepKeepFunctions(map));
     const durationMs = now() - startedAt;
+    normalizeCellEdgeReferences(stepMap);
+    rebuildTerrainAreaGroup(stepMap);
 
     stepResults.push({
       step: step.title,
@@ -34,6 +37,54 @@ export function runPipeline(settings, initialMap = new Map(settings), registered
   }
 
   return {map, stepResults};
+}
+
+function normalizeCellEdgeReferences(map) {
+  if (!Array.isArray(map?.cells)) return;
+
+  for (const cell of map.cells) {
+    if (!Array.isArray(cell?.edges)) {
+      cell.edges = [];
+      continue;
+    }
+
+    cell.edges = cell.edges.filter(Boolean);
+  }
+}
+
+function rebuildTerrainAreaGroup(map) {
+  if (!Array.isArray(map?.cells)) return;
+  const terrainGroup = Array.isArray(map.areas)
+    ? map.areas.find((group) => group?.name === "terrain")
+    : null;
+
+  if (terrainGroup && hasRichTerrainAreas(terrainGroup)) {
+    return;
+  }
+
+  const seaCells = [];
+  const landCells = [];
+  for (const cell of map.cells) {
+    if (cell.type === "SEA") seaCells.push(cell);
+    else if (cell.type === "LAND") landCells.push(cell);
+  }
+  if (!terrainGroup && seaCells.length === 0 && landCells.length === 0) return;
+
+  const otherGroups = Array.isArray(map.areas)
+    ? map.areas.filter((group) => group?.name !== "terrain")
+    : [];
+
+  map.areas = [
+    ...otherGroups,
+    AreaGroup("terrain", [
+      Area("sea", "SEA", seaCells),
+      Area("land", "LAND", landCells),
+    ]),
+  ];
+}
+
+function hasRichTerrainAreas(terrainGroup) {
+  return (terrainGroup?.areas ?? []).some((area) => area?.tint !== undefined || area?.kind !== undefined || area?.tintOpacity !== undefined);
 }
 
 function now() {

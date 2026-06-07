@@ -10,23 +10,85 @@ const FIXED_COLOR = "#ef4444";
 const VIOLET_COLOR = "#8b5cf6";
 const RIVER_COLOR = "var(--sea-edge)";
 
+function isPrimaryRiverEdge(edge) {
+  return edge.riverRole === "PRIMARY" || edge.riverRole === "MAIN";
+}
+
+function isTributaryRiverEdge(edge) {
+  return edge.riverRole && !isPrimaryRiverEdge(edge);
+}
+
 export function smoothRivers(settings, map) {
-  const context = createSmoothRiverContext(map);
+  return smoothRiversWithOptions(map, {
+    shouldProcessEdge: () => true,
+    keepMergeAnchors: true,
+  });
+}
+
+export function smoothPrimaryRivers(settings, map) {
+  return smoothRiversWithOptions(map, {
+    shouldProcessEdge: isPrimaryRiverEdge,
+    keepMergeAnchors: false,
+  });
+}
+
+export function smoothTributariesRivers(settings, map) {
+  return smoothRiversWithOptions(map, {
+    shouldProcessEdge: isTributaryRiverEdge,
+    keepMergeAnchors: true,
+  });
+}
+
+export function createReplay(settings, inputMap) {
+  return createSmoothRiversReplay(inputMap, {
+    label: "Normal river edges",
+    shouldProcessEdge: () => true,
+    keepMergeAnchors: true,
+    mergeText: "merge nodes are kept as fixed anchors",
+  });
+}
+
+export function createPrimaryReplay(settings, inputMap) {
+  return createSmoothRiversReplay(inputMap, {
+    label: "Primary river edges",
+    shouldProcessEdge: isPrimaryRiverEdge,
+    keepMergeAnchors: false,
+    mergeText: "no specific merge anchors are kept",
+  });
+}
+
+export function createTributariesReplay(settings, inputMap) {
+  return createSmoothRiversReplay(inputMap, {
+    label: "Tributary river edges",
+    shouldProcessEdge: isTributaryRiverEdge,
+    keepMergeAnchors: true,
+    mergeText: "merge nodes are kept as fixed anchors",
+  });
+}
+
+function smoothRiversWithOptions(map, options) {
+  const context = createSmoothRiverContext(map, options);
   if (context.riverEdges.length === 0) return map;
 
   bisectRiverEdges(context);
   sampleRiverEdges(context);
-  const plan = planBezierMoves(map);
+  const plan = planBezierMoves(context);
   applyBezierMoves(plan.moves);
   updateRiverTopologyEdges(map);
   return map;
 }
 
-export function createReplay(settings, inputMap) {
+function createSmoothRiversReplay(inputMap, options) {
   const map = cloneDeepKeepFunctions(inputMap);
-  const context = createSmoothRiverContext(map);
+  const context = createSmoothRiverContext(map, options);
   if (context.riverEdges.length === 0) {
-    return {frames: [{label: "Edge bisection", text: "No river topology edges are available to smooth.", map}]};
+    return {
+      frames: [{
+        label: "Edge bisection",
+        text: `No ${options.label.toLowerCase()} are available to smooth.`,
+        map,
+      }],
+    };
   }
 
   const frames = [];
@@ -34,7 +96,7 @@ export function createReplay(settings, inputMap) {
   frames.push(replayFrame(
     map,
     "Edge bisection",
-    "Normal river edges are split at their midpoint; merge nodes are kept as fixed anchors.",
+    `River topology edges are split at their midpoint; ${options.mergeText}.`,
     emptySmoothRiverOverlay()
   ));
 
@@ -53,7 +115,7 @@ export function createReplay(settings, inputMap) {
     overlayWithPoints([...fixedPoints(context.fixedNodes), ...samplePoints(context.sampleNodes)])
   ));
 
-  const plan = planBezierMoves(map);
+  const plan = planBezierMoves(context);
   frames.push(replayFrame(
     map,
     "Target Bezier",
@@ -90,28 +152,36 @@ export function createReplay(settings, inputMap) {
   return {frames};
 }
 
-function createSmoothRiverContext(map) {
+function createSmoothRiverContext(map, options = {}) {
+  const shouldProcessEdge = options.shouldProcessEdge ?? (() => true);
+  const keepMergeAnchors = options.keepMergeAnchors ?? false;
+
   const riverEdges = map.edges.filter((edge) => edge.type === RIVER_EDGE_TYPE);
   return {
     map,
     riverEdges,
-    mergeNodes: findMergeNodes(riverEdges),
+    shouldProcessEdge,
+    keepMergeAnchors,
+    mergeNodes: keepMergeAnchors ? findMergeNodes(riverEdges) : new globalThis.Set(),
     fixedNodes: [],
     sampleNodes: [],
   };
 }
 
 function bisectRiverEdges(context) {
-  const {map, mergeNodes, fixedNodes} = context;
+  const {map, mergeNodes, fixedNodes, shouldProcessEdge, keepMergeAnchors} = context;
+  const edgesToBisect = [...context.riverEdges].filter(shouldProcessEdge);
+
   for (const node of mergeNodes) {
     node.flags?.add(FIXED_FLAG);
     fixedNodes.push(node);
   }
 
-  const plannedEdges = [...context.riverEdges].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  const plannedEdges = [...edgesToBisect].sort((a, b) => String(a.id).localeCompare(String(b.id)));
   for (const edge of plannedEdges) {
     if (!map.edges.includes(edge) || edge.type !== RIVER_EDGE_TYPE) continue;
-    if (mergeNodes.has(edge.start) || mergeNodes.has(edge.end)) continue;
+    if (!shouldProcessEdge(edge)) continue;
+    if (keepMergeAnchors && (mergeNodes.has(edge.start) || mergeNodes.has(edge.end))) continue;
 
     const fixed = createFixedNode(map, edge, H.midpoint(edge.start, edge.end));
     fixedNodes.push(fixed);
@@ -123,7 +193,7 @@ function bisectRiverEdges(context) {
 }
 
 function sampleRiverEdges(context) {
-  const plannedEdges = mapRiverEdges(context.map);
+  const plannedEdges = mapRiverEdges(context.map, context.shouldProcessEdge);
   for (const edge of plannedEdges) {
     if (!context.map.edges.includes(edge) || edge.type !== RIVER_EDGE_TYPE) continue;
     replaceRiverEdgeWithSamples(context, edge);
@@ -212,8 +282,8 @@ function replaceEdgeReferences(map, edge, replacementEdges) {
   }
 }
 
-function planBezierMoves(map) {
-  const adjacency = buildRiverAdjacency(map.edges.filter((edge) => edge.type === RIVER_EDGE_TYPE));
+function planBezierMoves(context) {
+  const adjacency = buildRiverAdjacency(context.map.edges.filter((edge) => edge.type === RIVER_EDGE_TYPE && context.shouldProcessEdge(edge)));
   const paths = collectFixedNodePaths(adjacency);
   const moves = [];
   const curvePaths = [];
@@ -337,9 +407,9 @@ function updateRiverTopologyEdges(map) {
   }
 }
 
-function mapRiverEdges(map) {
+function mapRiverEdges(map, shouldProcessEdge = () => true) {
   return map.edges
-    .filter((edge) => edge.type === RIVER_EDGE_TYPE)
+    .filter((edge) => edge.type === RIVER_EDGE_TYPE && shouldProcessEdge(edge))
     .sort((a, b) => String(a.id).localeCompare(String(b.id)));
 }
 

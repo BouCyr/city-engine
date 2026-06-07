@@ -30,7 +30,10 @@ export function computeRiverTopology(settings, map) {
   const splitSpecs = collectSplitSpecs(map, rivers);
   const replacements = new globalThis.Map();
 
-  for (const [cell, spec] of [...splitSpecs.entries()].sort((a, b) => String(a[0].id).localeCompare(String(b[0].id)))) {
+  const orderedSplitSpecs = [...splitSpecs.entries()]
+    .sort((a, b) => String(a[0].id).localeCompare(String(b[0].id)));
+
+  for (const [cell, spec] of orderedSplitSpecs) {
     if (cell.type !== TERRAIN_LAND) {
       console.warn(`River topology: skipping non-land river cell ${cell.id}`);
       continue;
@@ -90,7 +93,14 @@ function collectSplitSpecs(map, rivers) {
 
     const mergeSpec = ensureSplitSpec(specs, mergeCell);
     const tributaryEntry = midpointBetweenCells(mergeCell, firstTributaryCell);
-    if (tributaryEntry) addBoundaryPoint(mergeSpec, tributaryEntry, tributary);
+    if (tributaryEntry) {
+      const closestPrimaryPoint = findClosestPrimaryPointForTributary(mainRiver, mergeCell, tributaryEntry);
+      if (closestPrimaryPoint && !mergeSpec.closestPrimaryPointKey) {
+        mergeSpec.closestPrimaryPointKey = pointKey(closestPrimaryPoint);
+      }
+
+      addBoundaryPoint(mergeSpec, tributaryEntry, tributary);
+    }
 
     const mainIndex = (mainRiver?.riverCells ?? []).indexOf(mergeCell);
     if (mainIndex >= 0) {
@@ -110,6 +120,26 @@ function collectSplitSpecs(map, rivers) {
   }
 
   return specs;
+}
+
+function findClosestPrimaryPointForTributary(mainRiver, mergeCell, tributaryEntry) {
+  if (!mainRiver || !tributaryEntry) return null;
+
+  const mainIndex = (mainRiver.riverCells ?? []).indexOf(mergeCell);
+  if (mainIndex < 0) return null;
+
+  const candidates = [];
+  const mainEntry = riverEntryPoint(mainRiver, mainIndex);
+  const mainExit = riverExitPoint(mainRiver, mainIndex);
+  if (mainEntry) candidates.push(mainEntry);
+  if (mainExit) candidates.push(mainExit);
+
+  const uniqueCandidates = uniquePoints(candidates.filter(Boolean));
+  if (uniqueCandidates.length === 0) return null;
+
+  return uniqueCandidates.reduce((closest, candidate) => {
+    return H.distance(closest, tributaryEntry) <= H.distance(candidate, tributaryEntry) ? closest : candidate;
+  });
 }
 
 function ensureSplitSpec(specs, cell) {
@@ -216,7 +246,7 @@ function splitCellInTwo(map, cell, boundaryNodes, spec) {
   if (firstIndex < 0 || secondIndex < 0 || firstIndex === secondIndex) return [];
 
   const river = dominantRiver(spec);
-  const riverEdge = createOrGetEdge(map, boundaryNodes[0], boundaryNodes[1], RIVER_EDGE_TYPE, riverDraw(river), [RIVER_FLAG]);
+  const riverEdge = createOrGetRiverEdge(map, boundaryNodes[0], boundaryNodes[1], riverDraw(river), [RIVER_FLAG]);
   applyRiverMetadata(riverEdge, river);
 
   const firstPath = nodesBetween(nodes, firstIndex, secondIndex);
@@ -235,13 +265,13 @@ function splitCellAroundJunction(map, cell, boundaryNodes, spec) {
     .sort((a, b) => a.index - b.index);
   if (indexedNodes.length < 3) return splitCellInTwo(map, cell, boundaryNodes.slice(0, 2), spec);
 
-  const center = Node(`river-junction-${map.nodes.length}`, H.cellCentroid(cell).x, H.cellCentroid(cell).y, "river-junction");
-  map.nodes.push(center);
+  const center = resolveJunctionCenter(map, cell, spec, indexedNodes);
 
   const spokeByNode = new globalThis.Map();
   for (const {node} of indexedNodes) {
+    if (node === center) continue;
     const river = dominantRiverForNode(spec, node) ?? dominantRiver(spec);
-    const spoke = createOrGetEdge(map, node, center, RIVER_EDGE_TYPE, riverDraw(river), [RIVER_FLAG]);
+    const spoke = createOrGetRiverEdge(map, node, center, riverDraw(river), [RIVER_FLAG]);
     applyRiverMetadata(spoke, river);
     spokeByNode.set(node, spoke);
   }
@@ -251,21 +281,38 @@ function splitCellAroundJunction(map, cell, boundaryNodes, spec) {
     const current = indexedNodes[index];
     const next = indexedNodes[(index + 1) % indexedNodes.length];
     const path = nodesBetween(nodes, current.index, next.index);
+    const currentSpoke = current.node === center ? null : spokeByNode.get(current.node);
+    const nextSpoke = next.node === center ? null : spokeByNode.get(next.node);
     children.push(createChildCell(
       map,
       cell,
       `${cell.id}-bank-${index}`,
       path,
-      [spokeByNode.get(next.node), spokeByNode.get(current.node)]
+      [nextSpoke, currentSpoke]
     ));
   }
   return children;
 }
 
+function resolveJunctionCenter(map, cell, spec, indexedNodes) {
+  const preferredKey = spec.closestPrimaryPointKey;
+  if (preferredKey) {
+    const directMatch = indexedNodes.find((entry) => pointKey(entry.node) === preferredKey);
+    if (directMatch) {
+      directMatch.node.type = "river-junction";
+      return directMatch.node;
+    }
+  }
+
+  const center = Node(`river-junction-${map.nodes.length}`, H.cellCentroid(cell).x, H.cellCentroid(cell).y, "river-junction");
+  map.nodes.push(center);
+  return center;
+}
+
 function createChildCell(map, originalCell, id, boundaryPath, internalEdges) {
   const edges = [];
   for (let index = 0; index < boundaryPath.length - 1; index += 1) {
-    edges.push(createOrGetEdge(map, boundaryPath[index], boundaryPath[index + 1], originalCell.type, null, [TERRAIN_LAND]));
+    edges.push(createOrGetBoundaryEdge(map, boundaryPath[index], boundaryPath[index + 1], originalCell.type, null, [TERRAIN_LAND]));
   }
   edges.push(...internalEdges.filter(Boolean));
 
@@ -281,16 +328,32 @@ function createChildCell(map, originalCell, id, boundaryPath, internalEdges) {
   return child;
 }
 
-function createOrGetEdge(map, start, end, type, drawFn = null, flags = []) {
-  const existing = map.edges.find((edge) => (
-    (edge.start === start && edge.end === end) ||
-    (edge.start === end && edge.end === start)
-  ));
+function createOrGetBoundaryEdge(map, start, end, type, drawFn = null, flags = []) {
+  const existing = findEdgeByEndpoints(map, start, end, (edge) => edge.type !== RIVER_EDGE_TYPE);
   if (existing) return existing;
 
   const edge = Edge(`${type}-edge-${map.edges.length}`, start, end, type, drawFn, flags);
   map.edges.push(edge);
   return edge;
+}
+
+function createOrGetRiverEdge(map, start, end, drawFn = null, flags = []) {
+  const existing = findEdgeByEndpoints(map, start, end, (edge) => edge.type === RIVER_EDGE_TYPE);
+  if (existing) return existing;
+
+  const edge = Edge(`${RIVER_EDGE_TYPE}-edge-${map.edges.length}`, start, end, RIVER_EDGE_TYPE, drawFn, flags);
+  map.edges.push(edge);
+  return edge;
+}
+
+function findEdgeByEndpoints(map, start, end, matches = () => true) {
+  const existing = map.edges.find((edge) => (
+    matches(edge) && (
+    (edge.start === start && edge.end === end) ||
+    (edge.start === end && edge.end === start)
+    )
+  ));
+  return existing ?? null;
 }
 
 function assignEdgeCell(edge, oldCell, newCell) {
@@ -454,6 +517,18 @@ function nodesBetween(nodes, startIndex, endIndex) {
 
 function uniqueNodes(nodes) {
   return nodes.filter((node, index) => nodes.indexOf(node) === index);
+}
+
+function uniquePoints(points) {
+  const seen = new Set();
+  const result = [];
+  for (const point of points) {
+    const key = pointKey(point);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(point);
+  }
+  return result;
 }
 
 function uniqueCells(cells) {

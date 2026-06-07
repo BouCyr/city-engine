@@ -50,6 +50,8 @@ export function areaBoundaryPath(cells) {
 
   for (const cell of cells) {
     for (const edge of cell.edges || []) {
+      if (!edge) continue;
+
       const other = edge.leftCell === cell
         ? edge.rightCell
         : edge.rightCell === cell

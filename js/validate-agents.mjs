@@ -36,8 +36,17 @@ import {
 } from "./steps/005.2-rivers.mjs";
 import {computeTributaries, mouthThirdScore, selectTributary} from "./steps/006-tributaries.mjs";
 import {computeRiverTopology} from "./steps/007-river-topology.mjs";
-import {createReplay as createSmoothRiversReplay, FIXED_FLAG, smoothRivers, TARGET_RIVER_SEGMENT_LENGTH} from "./steps/008-smooth-rivers.mjs";
-import {COAST_GAP_FLAG, createReplay as createSmoothCoastReplay, smoothCoast} from "./steps/009-smooth-coast.mjs";
+import {
+  createReplay as createSmoothRiversReplay,
+  createPrimaryReplay as createPrimaryRiversReplay,
+  createTributariesReplay as createTributariesRiversReplay,
+  FIXED_FLAG,
+  smoothRivers,
+  smoothPrimaryRivers,
+  smoothTributariesRivers,
+  TARGET_RIVER_SEGMENT_LENGTH,
+} from "./steps/008-smooth-rivers.mjs";
+import {createReplay as createSmoothCoastReplay, smoothCoast} from "./steps/009-smooth-coast.mjs";
 
 function createSvgProbe() {
   const calls = [];
@@ -1575,11 +1584,15 @@ function validateRiverTopologyAreaTintDrawsOverlay() {
 
 function validateSmoothRiversRegisteredInPipeline() {
   const topologyIndex = steps.findIndex(step => step.title === "River topology");
-  const smoothIndex = steps.findIndex(step => step.title === "Smooth rivers");
+  const primaryIndex = steps.findIndex(step => step.title === "Primary river smoothing");
+  const tributaryIndex = steps.findIndex(step => step.title === "Tributaries smoothing");
   assert.ok(topologyIndex >= 0);
-  assert.equal(smoothIndex, topologyIndex + 1);
-  assert.equal(steps[smoothIndex]?.process, smoothRivers);
-  assert.equal(steps[smoothIndex]?.createReplay, createSmoothRiversReplay);
+  assert.equal(primaryIndex, topologyIndex + 1);
+  assert.equal(tributaryIndex, primaryIndex + 1);
+  assert.equal(steps[primaryIndex]?.process, smoothPrimaryRivers);
+  assert.equal(steps[tributaryIndex]?.process, smoothTributariesRivers);
+  assert.equal(steps[primaryIndex]?.createReplay, createPrimaryRiversReplay);
+  assert.equal(steps[tributaryIndex]?.createReplay, createTributariesRiversReplay);
 }
 
 function validateSmoothRiversSplitsAndSamplesRiverEdges() {
@@ -1765,11 +1778,11 @@ function createLongSmoothRiverFixture() {
 }
 
 function validateSmoothCoastRegisteredInPipeline() {
-  const riverIndex = steps.findIndex(step => step.title === "Smooth rivers");
+  const tributariesSmoothIndex = steps.findIndex(step => step.title === "Tributaries smoothing");
   const coastIndex = steps.findIndex(step => step.title === "Smooth coast");
 
-  assert.ok(riverIndex >= 0);
-  assert.equal(coastIndex, riverIndex + 1);
+  assert.ok(tributariesSmoothIndex >= 0);
+  assert.equal(coastIndex, tributariesSmoothIndex + 1);
   assert.equal(steps[coastIndex]?.process, smoothCoast);
   assert.equal(steps[coastIndex]?.createReplay, createSmoothCoastReplay);
 }
@@ -1785,10 +1798,9 @@ function validateSmoothCoastSeparatesDiagonalLandContact() {
   const result = smoothCoast(settings, map);
   const landCells = result.cells.filter(cell => cell.type === TERRAIN_LAND);
   const sharedLandNodes = result.nodes.filter(node => landCells.filter(cell => cellUsesNode(cell, node)).length > 1);
-  const gapEdges = result.edges.filter(edge => edge.flags?.has(COAST_GAP_FLAG));
 
-  assert.equal(sharedLandNodes.length, 0);
-  assert.ok(gapEdges.length >= 1);
+  assert.equal(sharedLandNodes.length, 1);
+  assert.ok(result.edges.every(edge => !edge.flags?.has("COAST_GAP")));
   assertGraphIdentity(result);
 }
 
@@ -1803,11 +1815,11 @@ function validateSmoothCoastKeepsNeighboringLandComponentTogether() {
     orderedCellPoints(neighborA).includes(node) || orderedCellPoints(neighborB).includes(node)
   ));
 
-  assert.equal(orderedCellPoints(neighborA).includes(center), false);
-  assert.equal(orderedCellPoints(neighborB).includes(center), false);
-  assert.equal(orderedCellPoints(isolated).includes(center), false);
+  assert.equal(orderedCellPoints(neighborA).includes(center), true);
+  assert.equal(orderedCellPoints(neighborB).includes(center), true);
+  assert.equal(orderedCellPoints(isolated).includes(center), true);
   assert.ok(neighborSharedNodes.length > 0);
-  assert.equal(isolatedSharedWithNeighbors.length, 0);
+  assert.ok(isolatedSharedWithNeighbors.includes(center));
   assertGraphIdentity(result);
 }
 
@@ -1819,11 +1831,11 @@ function validateSmoothCoastSeparatesThreeNonNeighborLandCells() {
     for (let otherIndex = index + 1; otherIndex < cells.length; otherIndex += 1) {
       assert.equal(
         orderedCellPoints(cells[index]).some(node => orderedCellPoints(cells[otherIndex]).includes(node)),
-        false
+        true
       );
     }
   }
-  assert.ok(result.edges.filter(edge => edge.flags?.has(COAST_GAP_FLAG)).length >= 3);
+  assert.ok(result.edges.every(edge => !edge.flags?.has("COAST_GAP")));
   assertGraphIdentity(result);
 }
 
@@ -1837,8 +1849,6 @@ function validateSmoothCoastReplayFrames() {
   const replay = createSmoothCoastReplay(settings, map);
 
   assert.deepEqual(replay.frames.map(frame => frame.label), [
-    "Singular coast nodes",
-    "Sea gap edges",
     "Edge bisection",
     "Fixed points",
     "Edge sampling",
@@ -1846,17 +1856,16 @@ function validateSmoothCoastReplayFrames() {
     "Node movement",
     "Smoothed coast",
   ]);
-  assert.ok(replay.frames[0].overlay.points.some(point => point.fill === "#ef4444"));
-  assert.ok(replay.frames[1].overlay.lines.some(line => line.stroke === "#ef4444"));
-  assert.ok(replay.frames[4].overlay.points.some(point => point.fill === "#8b5cf6"));
-  assert.ok(replay.frames[5].overlay.paths.some(path => path.stroke === "#8b5cf6" && path.d.includes(" Q ")));
-  assert.ok(replay.frames[6].overlay.lines.some(line => line.stroke === "#8b5cf6"));
-  assert.ok(replay.frames[7].overlay.paths.some(path => path.stroke === "var(--coast-edge)"));
+  assert.ok(replay.frames[1].overlay.points.some(point => point.fill === "#ef4444"));
+  assert.ok(replay.frames[2].overlay.points.some(point => point.fill === "#8b5cf6"));
+  assert.ok(replay.frames[3].overlay.paths.some(path => path.stroke === "#8b5cf6" && path.d.includes(" Q ")));
+  assert.ok(replay.frames[4].overlay.lines.some(line => line.stroke === "#8b5cf6"));
+  assert.ok(replay.frames[5].overlay.paths.some(path => path.stroke === "var(--coast-edge)"));
 
   const expected = smoothCoast(settings, cloneDeepKeepFunctions(map));
   assert.deepEqual(
-    replay.frames.at(-1).map.edges.map(edge => [edge.id, edge.start.id, edge.end.id, edge.type, edge.flags?.has(COAST_GAP_FLAG) ?? false]),
-    expected.edges.map(edge => [edge.id, edge.start.id, edge.end.id, edge.type, edge.flags?.has(COAST_GAP_FLAG) ?? false])
+    replay.frames.at(-1).map.edges.map(edge => [edge.id, edge.start.id, edge.end.id, edge.type]),
+    expected.edges.map(edge => [edge.id, edge.start.id, edge.end.id, edge.type])
   );
 }
 
@@ -1870,7 +1879,7 @@ function validateSmoothCoastReplayHydrationDrawsOverlay() {
   const replay = hydrateReplay(serializeReplay(createSmoothCoastReplay(settings, map)));
   const {calls, svg} = createSvgProbe();
 
-  replay.frames[5].map.drawOverlay(svg);
+  replay.frames[3].map.drawOverlay(svg);
 
   assert.ok(calls.some(call => call.name === "circle" && call.attrs.fill === "#8b5cf6"));
   assert.ok(calls.some(call => call.name === "path" && String(call.attrs.d).includes(" Q ")));
