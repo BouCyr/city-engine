@@ -21,16 +21,21 @@ export const CELL_TYPE_CELL = "Cell";
 export const TERRAIN_SEA = "SEA";
 export const TERRAIN_LAND = "LAND";
 export const TERRAIN_COAST = "COAST";
+export const TERRAIN_RIVER = "RIVER";
 
 export const EDGE_TYPE_VORONOI = "Voronoi";
 export const EDGE_TYPE_SEA = "sea";
 export const EDGE_TYPE_LAND = "land";
 export const EDGE_TYPE_COAST = "coast";
 export const EDGE_TYPE_RIVER = "river";
+export const EDGE_TYPE_BANK = "banks";
+export const EDGE_TYPE_MOUTH = "mouth";
+export const EDGE_TYPE_CROSSING = "crossing";
 
 export const TERRAIN_CLASS_SEA = "sea";
 export const TERRAIN_CLASS_LAND = "land";
 export const TERRAIN_CLASS_COAST = "coast";
+export const TERRAIN_CLASS_RIVER = "river";
 export const AREA_NAME_SEA = "sea";
 export const AREA_NAME_LAND = "land";
 

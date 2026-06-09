@@ -98,14 +98,15 @@ function cloneMapGraph(map, seen) {
     return groupClone;
   });
 
-  clone.rivers = (map.rivers ?? []).map((river) => cloneRiver(river, cellMap, seen));
+  clone.rivers = (map.rivers ?? []).map((river) => cloneRiver(river, cellMap, edgeMap, seen));
 
   return clone;
 }
 
-function cloneRiver(river, cellMap, seen) {
-  const riverClone = clonePlainGraphObject(river, seen, ["riverCells", "mouth", "originalMouth", "exit"]);
+function cloneRiver(river, cellMap, edgeMap, seen) {
+  const riverClone = clonePlainGraphObject(river, seen, ["riverCells", "topologyEdges", "mouth", "originalMouth", "exit"]);
   riverClone.riverCells = (river.riverCells ?? []).map((cell) => cellMap.get(cell)).filter(Boolean);
+  riverClone.topologyEdges = (river.topologyEdges ?? []).map((edge) => edgeMap.get(edge)).filter(Boolean);
   riverClone.originalMouth = river.originalMouth ? cellMap.get(river.originalMouth) ?? null : null;
   riverClone.exit = river.exit ? cellMap.get(river.exit) ?? null : null;
   riverClone.mouth = river.mouth ? cloneRiverMouth(river.mouth, cellMap) : null;

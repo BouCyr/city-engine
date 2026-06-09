@@ -1,10 +1,13 @@
+import {cloneDeepKeepFunctions} from "../data/clone.mjs";
 import * as H from "../data/helper.mjs";
 import {Settings} from "../data/settings.mjs";
 import {
   MAP_FLAG_BOUNDARY,
   RIVER_ROLE_FIRST_TRIBUTARY,
+  RIVER_ROLE_PRIMARY,
   RIVER_ROLE_SECOND_TRIBUTARY,
   RIVER_TYPE_TRIBUTARY,
+  OVERLAY_TYPE_RIVERS,
   TERRAIN_LAND,
   TERRAIN_SEA,
 } from "../constants.mjs";
@@ -20,6 +23,7 @@ import {
   meanderRiverCandidate,
   MIN_EDGE_SIZE,
   MIN_LOCKED_SEA_DISTANCE,
+  buildStraightRiverPath,
   normalizeRiver,
   riverKey,
   touchesBoundary,
@@ -27,6 +31,103 @@ import {
 } from "./005.2-rivers.mjs";
 
 const DEFAULT_TRIBUTARY_SETTINGS = new Settings().tributaries;
+const RIVER_COLOR = "var(--sea-edge)";
+
+export function createReplay(settings, inputMap) {
+  const map = cloneDeepKeepFunctions(inputMap);
+  const tributarySettings = resolveTributarySettings(settings);
+  const frames = [];
+
+  frames.push(replayFrame(map, "Before tributaries", "Tributaries are evaluated from the existing main river and its adjacent land banks.", emptyTributaryReplayOverlay()));
+
+  const mainRiver = map.rivers?.[0];
+  if (!mainRiver?.riverCells?.length) {
+    frames.push(replayFrame(map, "No tributaries", "No primary river was found, so tributaries cannot be generated.", emptyTributaryReplayOverlay()));
+    return {frames};
+  }
+
+  const landmass = largestComponent(connectedComponents(map.cells.filter(cell => cell.type === TERRAIN_LAND), landNeighbors));
+  if (landmass.length === 0) {
+    frames.push(replayFrame(map, "No tributaries", "No landmass was found after river extraction.", emptyTributaryReplayOverlay()));
+    return {frames};
+  }
+
+  const mainRiverSet = new Set(mainRiver.riverCells);
+  const banks = computeRiverBanks(landmass, mainRiverSet)
+    .sort((a, b) => b.length - a.length || componentKey(a).localeCompare(componentKey(b)));
+  if (banks.length === 0) {
+    frames.push(replayFrame(map, "No tributaries", "The main river does not split land into banks for attachment.", emptyTributaryReplayOverlay()));
+    return {frames};
+  }
+
+  frames.push(replayFrame(map, "Bank search", `${Math.min(2, banks.length)} largest bank components were inspected for tributaries.`, emptyTributaryReplayOverlay()));
+
+  const seaDistances = computeSeaOnlyDistances(new Set(landmass));
+  const rivers = [mainRiver];
+  let previousTributaryMouth = null;
+
+  for (const [index, bank] of banks.slice(0, 2).entries()) {
+    const bankLabel = `Bank ${index + 1}`;
+    const deadline = now() + tributarySettings.maxComputeMs;
+    const tributary = findBestTributary({
+      bank,
+      mainRiver,
+      mainRiverSet,
+      seaDistances,
+      previousTributaryMouth,
+      deadline,
+      tributarySettings,
+    });
+
+    if (!tributary) {
+      frames.push(replayFrame(map, `${bankLabel}: no tributary`, `${bankLabel} had no valid boundary-to-boundary path in this run.`, emptyTributaryReplayOverlay()));
+      continue;
+    }
+
+    frames.push(replayFrame(
+      map,
+      `${bankLabel}: best candidate`,
+      `${bankLabel} candidate found. The raw route is shown before local meander refinement.`,
+      riversReplayOverlay([tributary]),
+    ));
+
+    const meanderedTributary = meanderRiverCandidate({
+      candidate: tributary,
+      selectedLandSet: bankSetWithMouth(bank, tributary.mouth),
+      riverSettings: {
+        ...(settings?.rivers ?? {}),
+        minLockedSeaDistance: tributarySettings.seaDThreshold,
+      },
+    });
+
+    const normalized = normalizeRiver(meanderedTributary, {
+      type: RIVER_TYPE_TRIBUTARY,
+      id: `river-${rivers.length}`,
+      order: rivers.length,
+      sourceRiverId: mainRiver.id ?? "river-0",
+      role: rivers.length === 1 ? RIVER_ROLE_FIRST_TRIBUTARY : RIVER_ROLE_SECOND_TRIBUTARY,
+    });
+    normalized.mouth = {
+      ...normalized.mouth,
+      riverExitPoint: mainRiverExitPoint(mainRiver, normalized.mouth?.riverCell),
+    };
+
+    rivers.push(normalized);
+    map.rivers = [...rivers];
+    previousTributaryMouth = normalized.mouth.cell;
+
+    frames.push(replayFrame(
+      map,
+      `${bankLabel}: applied`,
+      `${bankLabel} has been meander-refined and appended to the river list.`,
+      riversReplayOverlay([normalized]),
+    ));
+  }
+
+  map.rivers = rivers;
+  frames.push(replayFrame(map, "Tributaries complete", `Added ${Math.max(0, rivers.length - 1)} tributary river(s).`, emptyTributaryReplayOverlay()));
+  return {frames};
+}
 
 export function computeTributaries(settings, map) {
   const startedAt = now();
@@ -278,6 +379,67 @@ export function mouthThirdScore(candidate, mainRiver) {
 function sourceExitDistance(candidate, mainRiver) {
   if (!candidate?.exit || !mainRiver?.exit) return 0;
   return H.distance(H.cellCentroid(candidate.exit), H.cellCentroid(mainRiver.exit));
+}
+
+function emptyTributaryReplayOverlay() {
+  return {
+    type: OVERLAY_TYPE_RIVERS,
+    paths: [],
+  };
+}
+
+function cloneTributaryReplayOverlay(overlay = {}) {
+  return {
+    type: overlay.type ?? OVERLAY_TYPE_RIVERS,
+    paths: (overlay.paths ?? []).map((path) => ({...path})),
+  };
+}
+
+function riversReplayOverlay(rivers = []) {
+  return {
+    ...emptyTributaryReplayOverlay(),
+    paths: (rivers ?? [])
+      .map((river) => {
+        const path = buildStraightRiverPath(river);
+        if (!path) return null;
+        return {
+          d: path,
+          stroke: RIVER_COLOR,
+          strokeWidth: riverReplayStrokeWidth(river),
+          opacity: 1,
+        };
+      })
+      .filter(Boolean),
+  };
+}
+
+function riverReplayStrokeWidth(river) {
+  if (!river?.role) return 8;
+  return river.role === RIVER_ROLE_PRIMARY ? 12 : 8;
+}
+
+function replayFrame(map, label, text, overlay) {
+  const frameMap = cloneDeepKeepFunctions(map);
+  const frameOverlay = overlay ? cloneTributaryReplayOverlay(overlay) : emptyTributaryReplayOverlay();
+  frameMap.drawOverlay = createReplayOverlayDraw(frameOverlay);
+  return {label, text, map: frameMap, overlay: frameOverlay};
+}
+
+function createReplayOverlayDraw(overlay) {
+  return function drawReplay(svg) {
+    const layer = svg.getElementById("overlay") ?? svg.getElementById("cells");
+    if (!layer) return;
+
+    for (const path of overlay?.paths ?? []) {
+      const element = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      element.setAttribute("fill", "none");
+      element.setAttribute("stroke", path.stroke ?? RIVER_COLOR);
+      element.setAttribute("stroke-width", String(path.strokeWidth ?? 8));
+      element.setAttribute("stroke-opacity", String(path.opacity ?? 1));
+      element.setAttribute("d", path.d);
+      layer.appendChild(element);
+    }
+  };
 }
 
 function compareTributaryMouths(a, b) {

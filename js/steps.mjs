@@ -6,8 +6,7 @@ import * as SEA_LAND from "./steps/004-sea-land.mjs";
 import * as NEEDLES from "./steps/005.1-needles.mjs";
 import * as RIVERS from "./steps/005.2-rivers.mjs";
 import * as TRIBUTARIES from "./steps/006-tributaries.mjs";
-import * as RIVER_TOPOLOGY from "./steps/007-river-topology.mjs";
-import * as SMOOTH_RIVERS from "./steps/008-smooth-rivers.mjs";
+import * as RIVER_CORRIDOR_TOPOLOGY from "./steps/007-river-corridor-topology.mjs";
 import * as SMOOTH_COAST from "./steps/009-smooth-coast.mjs";
 
 
@@ -124,6 +123,7 @@ export const steps = [
   {
     title:"Tributaries",
     process:TRIBUTARIES.computeTributaries,
+    createReplay: TRIBUTARIES.createReplay,
     description: (settings, stepMap) => [
       `This step reads the selected main river from <em>map.rivers</em>, splits its landmass into river banks, and tries to add one tributary per bank.`,
       `Tributary mouths must be land cells next to the main river, at least four land-cell steps away from sea, and the second tributary mouth must stay at least two cell steps away from the first.`,
@@ -133,52 +133,6 @@ export const steps = [
     explanation: (settings, stepResult) => [
       `Tributaries are stored after the main river in <em>map.rivers</em>. The step keeps the main river as the first entry and appends up to two tributaries.`,
       `Each bank is searched independently, starting with the larger bank. Tributary exits must have seaD at least eight, and banks with no valid route within the computation limit are skipped.`,
-    ],
-    renderExplanationExtras: null,
-  },
-  {
-    title:"River topology",
-    process:RIVER_TOPOLOGY.computeRiverTopology,
-    description: (settings, stepMap) => [
-      `This step turns the selected river and tributary paths into graph topology by splitting each traversed land cell along the river centerline.`,
-      `Normal river cells become two land cells separated by a <em>river</em> edge, while tributary merge cells are split around a three-way river junction.`,
-      `After the split, terrain areas are recomputed so rivers, sea, and the map boundary separate land areas.`,
-    ],
-    explanation: (settings, stepResult) => [
-      `River topology reads <em>map.rivers</em> from the previous steps and promotes those visual routes into real edges and cells.`,
-      `The step preserves graph identity by splitting existing cell boundary edges at river entry and exit points, then replacing each traversed cell with canonical child cells that reference canonical nodes and edges.`,
-      `Land areas are rebuilt as connected components separated by river edges, coast, sea, and map boundaries. They keep the same terrain fill so land edges remain the visible separation signal.`,
-    ],
-    renderExplanationExtras: null,
-  },
-  {
-    title:"Primary river smoothing",
-    process:SMOOTH_RIVERS.smoothPrimaryRivers,
-    createReplay: SMOOTH_RIVERS.createPrimaryReplay,
-    description: (settings, stepMap) => [
-      `This step samples primary river topology edges into regular sub-edges with a target segment length of <em>${SMOOTH_RIVERS.TARGET_RIVER_SEGMENT_LENGTH}</em> map units.`,
-      `Primary river segments receive a fixed midpoint anchor, then non-fixed sample nodes are moved on quadratic Bezier curves from mouth-like endpoints to exit-like endpoints.`,
-      `Intermediate river nodes between fixed anchors are moved onto quadratic Bezier curves so rivers become smoother while preserving canonical graph references.`,
-    ],
-    explanation: (settings, stepResult) => [
-      `Smooth rivers works on the real river edges created by River topology, not on the earlier visual overlay.`,
-      `Each fixed anchor is stored as a node flag. A fixed midpoint is added for every sampled segment in this pass.`,
-      `Mouth and exit tails that do not lie between two fixed anchors stay as straight sampled sections.`,
-    ],
-    renderExplanationExtras: null,
-  },
-  {
-    title:"Tributaries smoothing",
-    process:SMOOTH_RIVERS.smoothTributariesRivers,
-    createReplay: SMOOTH_RIVERS.createTributariesReplay,
-    description: (settings, stepMap) => [
-      `This step samples tributary topology edges into regular sub-edges with a target segment length of <em>${SMOOTH_RIVERS.TARGET_RIVER_SEGMENT_LENGTH}</em> map units.`,
-      `Tributary sections are anchored at merge nodes first, then smoothed from junction-like anchors to the next fixed point along each tributary chain.`,
-      `Intermediate tributary nodes between fixed anchors are moved onto quadratic Bezier curves so tributaries match the primary flow shape.`,
-    ],
-    explanation: (settings, stepResult) => [
-      `Tributary smoothing also works on the real river edges from River topology and keeps river metadata on each replacement edge.`,
-      `Merge nodes remain fixed so tributary branches retain a stable connection point while only interior sample nodes are repositioned.`,
     ],
     renderExplanationExtras: null,
   },
@@ -194,6 +148,20 @@ export const steps = [
     explanation: (settings, stepResult) => [
       `Smooth coast splits each eligible coast edge at a fixed midpoint and then inserts regular sample nodes by target segment length.`,
       `It builds a path graph from fixed anchor nodes and non-fixed sample nodes, then moves non-fixed nodes onto quadratic Bezier curves constrained by neighboring anchors.`,
+    ],
+    renderExplanationExtras: null,
+  },
+  {
+    title:"River corridor topology",
+    process:RIVER_CORRIDOR_TOPOLOGY.computeRiverCorridorTopology,
+    createReplay: RIVER_CORRIDOR_TOPOLOGY.createReplay,
+    description: (settings, stepMap) => [
+      `This step converts the selected primary river path into first-class <em>RIVER</em> terrain using a total corridor width of <em>${settings.riverCells?.primaryWidth ?? 40}</em> map units.`,
+      `It subtracts the corridor from <em>LAND</em> cells only, ignores the corridor over sea, and rebuilds the map graph from canonical land, sea, and river polygons.`,
+    ],
+    explanation: (settings, stepResult) => [
+      `River corridor topology reads the ordered primary river cells selected by the river search, smooths their centroid path geometrically, offsets it into a corridor polygon, and applies polygon boolean operations to carve land cells.`,
+      `No centerline river edges or crossing nodes are created. Banks and mouths are ordinary shared edges between <em>LAND</em>, <em>SEA</em>, and <em>RIVER</em> cells.`,
     ],
     renderExplanationExtras: null,
   }

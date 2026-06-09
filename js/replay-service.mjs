@@ -5,7 +5,10 @@ import {Settings} from "./data/settings.mjs";
 import {steps} from "./steps.mjs";
 import {
   EDGE_TYPE_COAST,
+  EDGE_TYPE_BANK,
+  EDGE_TYPE_CROSSING,
   EDGE_TYPE_LAND,
+  EDGE_TYPE_MOUTH,
   EDGE_TYPE_RIVER,
   EDGE_TYPE_SEA,
   OVERLAY_TYPE_COAST_CENTROIDS,
@@ -14,8 +17,10 @@ import {
   OVERLAY_TYPE_RIVERS,
   RIVER_ROLE_PRIMARY,
   TERRAIN_CLASS_LAND,
+  TERRAIN_CLASS_RIVER,
   TERRAIN_CLASS_SEA,
   TERRAIN_LAND,
+  TERRAIN_RIVER,
   TERRAIN_SEA,
 } from "./constants.mjs";
 const GATHER_OVERLAY_COMPETITOR_LIMIT = 6;
@@ -25,22 +30,26 @@ export function plainSettings(settings) {
   return {
     seed: settings.seed,
     size: settings.size,
+    pipeline: {...settings.pipeline},
     scatter: {...settings.scatter},
     prune: {...settings.prune},
     coast: {...settings.coast},
     rivers: {...settings.rivers},
     tributaries: {...settings.tributaries},
+    riverCells: {...settings.riverCells},
   };
 }
 
 export function hydrateSettings(data) {
   const settings = new Settings(data?.seed);
   settings.size = data?.size ?? settings.size;
+  settings.pipeline = {...settings.pipeline, ...(data?.pipeline ?? {})};
   settings.scatter = {...settings.scatter, ...(data?.scatter ?? {})};
   settings.prune = {...settings.prune, ...(data?.prune ?? {})};
   settings.coast = {...settings.coast, ...(data?.coast ?? {})};
   settings.rivers = {...settings.rivers, ...(data?.rivers ?? {})};
   settings.tributaries = {...settings.tributaries, ...(data?.tributaries ?? {})};
+  settings.riverCells = {...settings.riverCells, ...(data?.riverCells ?? {})};
   return settings;
 }
 
@@ -135,6 +144,7 @@ export function serializeMap(map) {
       mouthExitDistance: river.mouthExitDistance ?? 0,
       sourceExitDistance: river.sourceExitDistance ?? 0,
       riverCellIds: (river.riverCells ?? []).map((cell) => cell.id),
+      topologyEdgeIds: (river.topologyEdges ?? []).map((edge) => edge.id),
       mouth: river.mouth ? {
         cellId: river.mouth.cell?.id ?? null,
         seaCellId: river.mouth.seaCell?.id ?? null,
@@ -232,6 +242,7 @@ export function hydrateMap(data) {
     mouthExitDistance: riverData.mouthExitDistance ?? 0,
     sourceExitDistance: riverData.sourceExitDistance ?? 0,
     riverCells: (riverData.riverCellIds ?? []).map((id) => cellById.get(id)).filter(Boolean),
+    topologyEdges: (riverData.topologyEdgeIds ?? []).map((id) => edgeById.get(id)).filter(Boolean),
     mouth: riverData.mouth ? {
       cell: riverData.mouth.cellId ? cellById.get(riverData.mouth.cellId) ?? null : null,
       seaCell: riverData.mouth.seaCellId ? cellById.get(riverData.mouth.seaCellId) ?? null : null,
@@ -302,6 +313,14 @@ function drawTerrainEdge(svg) {
     path.setAttribute("class", "edge terrain-coast");
   } else if (this.type === EDGE_TYPE_SEA) {
     path.setAttribute("class", "edge terrain-sea");
+  } else if (this.type === EDGE_TYPE_BANK) {
+    path.setAttribute("class", "edge terrain-banks");
+  } else if (this.type === EDGE_TYPE_MOUTH) {
+    path.setAttribute("class", "edge terrain-mouth");
+  } else if (this.type === EDGE_TYPE_CROSSING) {
+    path.setAttribute("class", "edge terrain-crossing");
+  } else if (this.type === EDGE_TYPE_RIVER) {
+    path.setAttribute("class", "edge terrain-river");
   } else {
     path.setAttribute("class", "edge terrain-land");
   }
@@ -342,7 +361,7 @@ function drawTerrainCell(svg) {
 
   const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
   polygon.setAttribute("points", orderedCellPoints(this).map((point) => `${point.x},${point.y}`).join(" "));
-  polygon.setAttribute("class", `cell terrain-${this.type === TERRAIN_SEA ? TERRAIN_CLASS_SEA : TERRAIN_CLASS_LAND}`);
+  polygon.setAttribute("class", `cell terrain-${terrainClassForCell(this.type)}`);
   layer.appendChild(polygon);
 }
 
@@ -354,12 +373,21 @@ function drawForEdge(type) {
   return type === EDGE_TYPE_SEA
     || type === EDGE_TYPE_LAND
     || type === EDGE_TYPE_COAST
+    || type === EDGE_TYPE_BANK
+    || type === EDGE_TYPE_MOUTH
+    || type === EDGE_TYPE_CROSSING
     ? drawTerrainEdge
     : drawDefaultEdge;
 }
 
 function drawForCell(type) {
-  return type === TERRAIN_SEA || type === TERRAIN_LAND ? drawTerrainCell : drawDefaultCell;
+  return type === TERRAIN_SEA || type === TERRAIN_LAND || type === TERRAIN_RIVER ? drawTerrainCell : drawDefaultCell;
+}
+
+function terrainClassForCell(type) {
+  if (type === TERRAIN_SEA) return TERRAIN_CLASS_SEA;
+  if (type === TERRAIN_RIVER) return TERRAIN_CLASS_RIVER;
+  return TERRAIN_CLASS_LAND;
 }
 
 function createGatherOverlayDraw({size, site, sites, polygon}) {

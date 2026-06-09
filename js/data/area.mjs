@@ -1,4 +1,4 @@
-import {TERRAIN_CLASS_LAND, TERRAIN_CLASS_SEA, TERRAIN_LAND, TERRAIN_SEA} from "../constants.mjs";
+import {TERRAIN_CLASS_LAND, TERRAIN_CLASS_RIVER, TERRAIN_CLASS_SEA, TERRAIN_LAND, TERRAIN_RIVER, TERRAIN_SEA} from "../constants.mjs";
 import {orderedCellPoints} from "./cell.mjs";
 
 export function AreaGroup(name, areas = []) {
@@ -103,7 +103,9 @@ function segmentsToPath(segments) {
 }
 
 function terrainClass(type) {
-  return type === TERRAIN_SEA ? TERRAIN_CLASS_SEA : TERRAIN_CLASS_LAND;
+  if (type === TERRAIN_SEA) return TERRAIN_CLASS_SEA;
+  if (type === TERRAIN_RIVER) return TERRAIN_CLASS_RIVER;
+  return TERRAIN_CLASS_LAND;
 }
 
 function areaInnerBorderFilterId(type) {

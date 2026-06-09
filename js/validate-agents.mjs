@@ -23,6 +23,9 @@ import {
   AREA_NAME_LAND,
   AREA_NAME_SEA,
   CELL_TYPE_CELL,
+  EDGE_TYPE_BANK,
+  EDGE_TYPE_CROSSING,
+  EDGE_TYPE_MOUTH,
   EDGE_TYPE_RIVER,
   EDGE_TYPE_VORONOI,
   MAP_FLAG_BOUNDARY,
@@ -32,6 +35,7 @@ import {
   MAP_FLAG_TEST,
   MAP_FLAG_TEST_GATE,
   MAP_FLAG_TEST_PRIMARY,
+  NODE_TYPE_CROSSING,
   NODE_TYPE_RIVER,
   NODE_TYPE_RIVER_JUNCTION,
   NODE_TYPE_TEST_FIXTURE,
@@ -47,6 +51,7 @@ import {
   RIVER_TYPE_MAIN,
   RIVER_TYPE_TRIBUTARY,
   TERRAIN_LAND,
+  TERRAIN_RIVER,
   TERRAIN_SEA,
   TERRAIN_COAST,
 } from "./constants.mjs";
@@ -67,7 +72,12 @@ import {
   MIN_EDGE_SIZE,
   selectSelectedRiver,
 } from "./steps/005.2-rivers.mjs";
-import {computeTributaries, mouthThirdScore, selectTributary} from "./steps/006-tributaries.mjs";
+import {
+  computeTributaries,
+  createReplay as createTributariesReplay,
+  mouthThirdScore,
+  selectTributary,
+} from "./steps/006-tributaries.mjs";
 import {computeRiverTopology} from "./steps/007-river-topology.mjs";
 import {
   createReplay as createSmoothRiversReplay,
@@ -79,6 +89,10 @@ import {
   TARGET_RIVER_SEGMENT_LENGTH,
 } from "./steps/008-smooth-rivers.mjs";
 import {createReplay as createSmoothCoastReplay, smoothCoast} from "./steps/009-smooth-coast.mjs";
+import {
+  createReplay as createRiverCorridorTopologyReplay,
+  computeRiverCorridorTopology,
+} from "./steps/007-river-corridor-topology.mjs";
 
 function createSvgProbe() {
   const calls = [];
@@ -224,6 +238,29 @@ function validatePipelineSkipsReplayHotpath() {
   assert.equal(replayCalled, false);
 }
 
+function validatePipelineThrowsOnStepTimeout() {
+  const settings = new Settings("pipeline-timeout");
+  settings.pipeline.maxStepMs = 1;
+  const initialMap = new Map(settings);
+  const startedAt = Date.now();
+  const pipeline = [{
+    title: "Slow",
+    process(stepSettings, map) {
+      stepSettings.performanceMetrics.phase = "test-timeout";
+      stepSettings.performanceMetrics.iterations = 1;
+      while (Date.now() - startedAt <= 3) {
+      }
+      stepSettings.checkDeadline("busy-loop");
+      return map;
+    },
+  }];
+
+  assert.throws(
+    () => runPipeline(settings, initialMap, pipeline),
+    /Slow exceeded 1ms generation limit at busy-loop; metrics: phase=test-timeout, iterations=1/
+  );
+}
+
 function validateScatterReplay() {
   const settings = new Settings("scatter-replay");
   settings.scatter.nb = 4;
@@ -290,6 +327,7 @@ function validateStepSettingsOwnershipAndReadOnlySharing() {
   const tributarySeed = tributarySettings.find(({definition}) => definition.path === "seed");
   const riverMaxCompute = tributarySettings.find(({definition}) => definition.path === "rivers.maxComputeMs");
   const tributaryMaxCompute = tributarySettings.find(({definition}) => definition.path === "tributaries.maxComputeMs");
+  const stepTimeLimit = initializationSettings.find(({definition}) => definition.path === "pipeline.maxStepMs");
 
   assert.equal(seed?.editable, true);
   assert.equal(seed?.sourceStep, "Initialization");
@@ -299,6 +337,8 @@ function validateStepSettingsOwnershipAndReadOnlySharing() {
   assert.equal(riverMaxCompute?.sourceStep, "Rivers");
   assert.equal(tributaryMaxCompute?.editable, true);
   assert.equal(tributaryMaxCompute?.sourceStep, "Tributaries");
+  assert.equal(stepTimeLimit?.editable, true);
+  assert.equal(stepTimeLimit?.sourceStep, "Initialization");
 
   for (const step of steps) {
     for (const entry of settingsForStep(step.title)) {
@@ -1471,12 +1511,19 @@ function validateRiverCloneAndHydrationPreserveRivers() {
   }
 }
 
-function validateRiverTopologyRegisteredInPipeline() {
+function validateRiverCorridorTopologyRegisteredInPipeline() {
   const tributaryIndex = steps.findIndex(step => step.title === "Tributaries");
-  const topologyIndex = steps.findIndex(step => step.title === "River topology");
+  const coastIndex = steps.findIndex(step => step.title === "Smooth coast");
+  const corridorIndex = steps.findIndex(step => step.title === "River corridor topology");
   assert.ok(tributaryIndex >= 0);
-  assert.equal(topologyIndex, tributaryIndex + 1);
-  assert.equal(steps[topologyIndex]?.process, computeRiverTopology);
+  assert.equal(coastIndex, tributaryIndex + 1);
+  assert.equal(corridorIndex, coastIndex + 1);
+  assert.equal(steps[corridorIndex]?.process, computeRiverCorridorTopology);
+  assert.equal(steps[corridorIndex]?.createReplay, createRiverCorridorTopologyReplay);
+  assert.equal(steps.findIndex(step => step.title === "River topology"), -1);
+  assert.equal(steps.findIndex(step => step.title === "Primary river smoothing"), -1);
+  assert.equal(steps.findIndex(step => step.title === "Tributaries smoothing"), -1);
+  assert.equal(steps.findIndex(step => step.title === "River cells"), -1);
 }
 
 function validateRiverTopologySplitsMainRiverCell() {
@@ -1617,16 +1664,10 @@ function validateRiverTopologyAreaDoesNotDrawTintOverlay() {
 }
 
 function validateSmoothRiversRegisteredInPipeline() {
-  const topologyIndex = steps.findIndex(step => step.title === "River topology");
   const primaryIndex = steps.findIndex(step => step.title === "Primary river smoothing");
   const tributaryIndex = steps.findIndex(step => step.title === "Tributaries smoothing");
-  assert.ok(topologyIndex >= 0);
-  assert.equal(primaryIndex, topologyIndex + 1);
-  assert.equal(tributaryIndex, primaryIndex + 1);
-  assert.equal(steps[primaryIndex]?.process, smoothPrimaryRivers);
-  assert.equal(steps[tributaryIndex]?.process, smoothTributariesRivers);
-  assert.equal(steps[primaryIndex]?.createReplay, createPrimaryRiversReplay);
-  assert.equal(steps[tributaryIndex]?.createReplay, createTributariesRiversReplay);
+  assert.equal(primaryIndex, -1);
+  assert.equal(tributaryIndex, -1);
 }
 
 function validateSmoothRiversSplitsAndSamplesRiverEdges() {
@@ -1812,13 +1853,183 @@ function createLongSmoothRiverFixture() {
 }
 
 function validateSmoothCoastRegisteredInPipeline() {
-  const tributariesSmoothIndex = steps.findIndex(step => step.title === "Tributaries smoothing");
+  const tributariesIndex = steps.findIndex(step => step.title === "Tributaries");
   const coastIndex = steps.findIndex(step => step.title === "Smooth coast");
 
-  assert.ok(tributariesSmoothIndex >= 0);
-  assert.equal(coastIndex, tributariesSmoothIndex + 1);
+  assert.ok(tributariesIndex >= 0);
+  assert.equal(coastIndex, tributariesIndex + 1);
   assert.equal(steps[coastIndex]?.process, smoothCoast);
   assert.equal(steps[coastIndex]?.createReplay, createSmoothCoastReplay);
+}
+
+function validateRiverCorridorTopologyRegisteredAfterSmoothCoast() {
+  const coastIndex = steps.findIndex(step => step.title === "Smooth coast");
+  const corridorIndex = steps.findIndex(step => step.title === "River corridor topology");
+
+  assert.ok(coastIndex >= 0);
+  assert.equal(corridorIndex, coastIndex + 1);
+  assert.equal(steps[corridorIndex]?.process, computeRiverCorridorTopology);
+}
+
+function validateRiverCorridorSettingsOwnership() {
+  const riverCellsSettings = settingsForStep("River corridor topology");
+  const coastSettings = settingsForStep("Smooth coast");
+  const primary = riverCellsSettings.find(({definition}) => definition.path === "riverCells.primaryWidth");
+  const tributary = riverCellsSettings.find(({definition}) => definition.path === "riverCells.tributaryWidth");
+  const primaryFromCoast = coastSettings.find(({definition}) => definition.path === "riverCells.primaryWidth");
+
+  assert.equal(primary?.editable, true);
+  assert.equal(primary?.definition.type, "number");
+  assert.equal(primary?.definition.min, 1);
+  assert.equal(primary?.definition.step, 1);
+  assert.equal(tributary?.editable, true);
+  assert.equal(tributary?.definition.min, 1);
+  assert.equal(primaryFromCoast, undefined);
+}
+
+function createRiverCorridorFixture(seed = "river-corridor") {
+  const {settings, map} = createGridTerrainFixture({
+    width: 4,
+    height: 3,
+    sea: [[0, 1]],
+    seed,
+  });
+  settings.riverCells.primaryWidth = 40;
+  const byId = id => map.cells.find(cell => cell.id === id);
+  const exitCell = byId("c-3-1");
+  const middleCell = byId("c-2-1");
+  const mouthCell = byId("c-1-1");
+  const seaCell = byId("c-0-1");
+  const tributaryMouthCell = byId("c-2-2");
+  const tributaryExitCell = byId("c-3-2");
+
+  map.rivers = [
+    {
+      id: "river-0",
+      type: RIVER_TYPE_MAIN,
+      role: RIVER_ROLE_PRIMARY,
+      order: 0,
+      riverCells: [mouthCell, middleCell, exitCell],
+      topologyEdges: [],
+      mouth: {cell: mouthCell, seaCell},
+      originalMouth: mouthCell,
+      exit: exitCell,
+    },
+    {
+      id: "river-1",
+      type: RIVER_TYPE_TRIBUTARY,
+      role: RIVER_ROLE_FIRST_TRIBUTARY,
+      order: 1,
+      sourceRiverId: "river-0",
+      riverCells: [tributaryMouthCell, tributaryExitCell],
+      topologyEdges: [],
+      mouth: {cell: tributaryMouthCell, riverCell: middleCell, riverExitPoint: {x: 300, y: 150}},
+      originalMouth: tributaryMouthCell,
+      exit: tributaryExitCell,
+    },
+  ];
+
+  return {settings, map};
+}
+
+function validateRiverCorridorTopologyCarvesLandCells() {
+  const {settings, map} = createRiverCorridorFixture();
+  const inputLandCells = map.cells.filter((cell) => cell.type === TERRAIN_LAND).length;
+  const result = computeRiverCorridorTopology(settings, map);
+  const riverCells = result.cells.filter((cell) => cell.type === TERRAIN_RIVER);
+  const river = result.rivers[0];
+  const tributary = result.rivers[1];
+
+  assert.equal(result.nodes.some((node) => node.type === NODE_TYPE_CROSSING), false);
+  assert.equal(river.topologyEdges.length, 0);
+  assert.equal(tributary.topologyEdges.length, 0);
+  assert.ok(river.riverCells.length >= 1);
+  assert.ok(tributary.riverCells.length >= 1);
+  assert.ok(tributary.riverCells.every((cell) => result.cells.includes(cell)));
+  assert.ok(tributary.riverCells.every((cell) => cell.type === TERRAIN_RIVER));
+  assert.ok(tributary.mouth.riverCell?.type === TERRAIN_RIVER);
+  assert.deepEqual(tributary.finalCenterline[0], {x: 250, y: 200});
+  const tributaryMergeArmPoint = {x: 300, y: 150};
+  assert.ok(tributary.finalCorridor.some((point) =>
+    Math.hypot(point.x - tributaryMergeArmPoint.x, point.y - tributaryMergeArmPoint.y) <= 20));
+  assert.ok(river.riverCells.every((cell) => result.cells.includes(cell)));
+  assert.ok(river.riverCells.every((cell) => cell.type === TERRAIN_RIVER));
+  assert.ok(result.cells.filter((cell) => cell.type === TERRAIN_LAND).length >= inputLandCells);
+  assert.ok(result.edges.some((edge) => edge.type === EDGE_TYPE_BANK));
+  assert.ok(result.edges.some((edge) => edge.type === EDGE_TYPE_MOUTH));
+  assert.equal(result.edges.some((edge) => edge.type === EDGE_TYPE_CROSSING), false);
+  assert.equal(result.edges.some((edge) => edge.start.type === NODE_TYPE_CROSSING || edge.end.type === NODE_TYPE_CROSSING), false);
+  assert.equal(result.edges.some((edge) => String(edge.id).startsWith("river-carve-edge-")), false);
+  assert.ok(result.areas[0].areas.some((area) => area.type === TERRAIN_RIVER));
+  assert.ok(result.areas[0].areas.filter((area) => area.type === TERRAIN_LAND).every((area) => !area.holes));
+  assert.ok(result.rivers[0].finalCorridor.every((point) => point.center === undefined));
+  assert.doesNotThrow(() => cloneDeepKeepFunctions(result));
+  assertRiverTopologyGraphIdentity(result);
+}
+
+function validateRiverCorridorWidthChangesDeterministically() {
+  const narrow = createRiverCorridorFixture("river-corridor-width");
+  narrow.settings.riverCells.primaryWidth = 20;
+  const narrowResult = computeRiverCorridorTopology(narrow.settings, narrow.map);
+
+  const wide = createRiverCorridorFixture("river-corridor-width");
+  wide.settings.riverCells.primaryWidth = 60;
+  const wideResult = computeRiverCorridorTopology(wide.settings, wide.map);
+
+  const narrowPoints = orderedCellPoints(narrowResult.rivers[0].riverCells[0]).map((node) => [node.x, node.y]);
+  const widePoints = orderedCellPoints(wideResult.rivers[0].riverCells[0]).map((node) => [node.x, node.y]);
+
+  assert.notDeepEqual(narrowPoints, widePoints);
+  assert.deepEqual(
+    narrowPoints,
+    orderedCellPoints(computeRiverCorridorTopology(narrow.settings, createRiverCorridorFixture("river-corridor-width").map).rivers[0].riverCells[0]).map((node) => [node.x, node.y])
+  );
+}
+
+function validateRiverCorridorCloneAndHydration() {
+  const {settings, map} = createRiverCorridorFixture("river-corridor-clone");
+  const result = computeRiverCorridorTopology(settings, map);
+  const cloned = cloneDeepKeepFunctions(result);
+  const hydrated = hydrateMap(serializeMap(result));
+  const originalRiverCell = result.rivers[0].riverCells[0];
+
+  assert.equal(cloned.rivers[0].riverCells[0], cloned.cells.find((cell) => cell.id === originalRiverCell.id));
+  assert.equal(hydrated.rivers[0].riverCells[0], hydrated.cells.find((cell) => cell.id === originalRiverCell.id));
+  assert.ok(hydrated.cells.some((cell) => cell.type === TERRAIN_RIVER));
+  assert.ok(hydrated.edges.some((edge) => edge.type === EDGE_TYPE_BANK));
+  assert.ok(hydrated.edges.some((edge) => edge.type === EDGE_TYPE_MOUTH));
+  assert.equal(hydrated.areas[0].areas.some((area) => area.holes?.includes(hydrated.rivers[0].riverCells[0])), false);
+  assertRiverTopologyGraphIdentity(cloned);
+  assertRiverTopologyGraphIdentity(hydrated);
+}
+
+function validateRiverCorridorTopologyReplayFrames() {
+  const {settings, map} = createRiverCorridorFixture("river-corridor-replay");
+  const replay = createRiverCorridorTopologyReplay({
+    ...settings,
+    rng: settings.createStepRng("River corridor topology"),
+  }, cloneDeepKeepFunctions(map));
+  const processed = computeRiverCorridorTopology(
+    {
+      ...settings,
+      rng: settings.createStepRng("River corridor topology"),
+    },
+    cloneDeepKeepFunctions(map),
+  );
+
+  assert.equal(replay.frames[0].label, "Before river corridor topology");
+  assert.equal(replay.frames.at(-1).label, "River corridor topology");
+  assert.ok(replay.frames.every((frame) => frame.overlay?.type === OVERLAY_TYPE_RIVERS));
+  assert.deepEqual(
+    replay.frames.at(-1).map.rivers.map((river) => [river.id, river.type, river.role]),
+    processed.rivers.map((river) => [river.id, river.type, river.role]),
+  );
+
+  const hydrated = hydrateReplay(serializeReplay(replay));
+  const {calls, svg} = createSvgProbe();
+  hydrated.frames.at(-1).map.drawOverlay(svg);
+  assert.ok(calls.length > 0);
+  assert.ok(calls.every(call => call.layerId === "overlay"));
 }
 
 function validateSmoothCoastSeparatesDiagonalLandContact() {
@@ -2012,6 +2223,7 @@ function validateTributariesRegisteredInPipeline() {
   assert.ok(riverIndex >= 0);
   assert.equal(tributaryIndex, riverIndex + 1);
   assert.equal(steps[tributaryIndex]?.process, computeTributaries);
+  assert.equal(steps[tributaryIndex]?.createReplay, createTributariesReplay);
 }
 
 function validateTributarySelectionUsesCombinedDistanceAndSeaD() {
@@ -2100,6 +2312,39 @@ function validateTributariesAddAdjacentBankRiver() {
   assert.equal(paths[0].attrs["stroke-width"], "12");
   assert.ok(paths.slice(1).every(path => path.attrs["stroke-width"] === "8"));
   assert.ok(paths[1].attrs.d.startsWith(`M ${tributary.mouth.riverExitPoint.x} ${tributary.mouth.riverExitPoint.y}`));
+}
+
+function validateTributariesReplayFrames() {
+  const {settings, map} = createTributaryFixture();
+  const replay = createTributariesReplay({
+    ...settings,
+    rng: settings.createStepRng("Tributaries"),
+  }, cloneDeepKeepFunctions(map));
+  const processed = computeTributaries({
+    ...settings,
+    rng: settings.createStepRng("Tributaries"),
+  }, cloneDeepKeepFunctions(map));
+
+  assert.equal(replay.frames[0].label, "Before tributaries");
+  assert.equal(replay.frames.at(-1).label, "Tributaries complete");
+  assert.ok(replay.frames.every(frame => frame.overlay?.type === OVERLAY_TYPE_RIVERS));
+
+  assert.deepEqual(
+    replay.frames.at(-1).map.rivers.map((river) => [river.id, river.type]),
+    processed.rivers.map((river) => [river.id, river.type]),
+  );
+
+  const candidateFrame = replay.frames.find((frame) => String(frame.label).includes("candidate"));
+  if (candidateFrame) {
+    const {calls, svg} = createSvgProbe();
+    candidateFrame.map.drawOverlay(svg);
+    assert.ok(calls.length > 0);
+    assert.ok(calls.every(call => call.layerId === "overlay"));
+  }
+
+  const hydrated = hydrateReplay(serializeReplay(replay));
+  assertGraphIdentity(hydrated.frames.at(-1).map);
+  assert.equal(hydrated.frames.at(-1).map.rivers.length, processed.rivers.length);
 }
 
 function validateAStarRiverDrawsStraightPath() {
@@ -2432,6 +2677,7 @@ validateSnapshotDrawingUsesClonedNodes();
 validateClonePreservesCellToSeaReference();
 validatePipelineClonesBeforeSteps();
 validatePipelineSkipsReplayHotpath();
+validatePipelineThrowsOnStepTimeout();
 validateScatterReplay();
 validateStepRngDeterminism();
 validateInitializationStepRegisteredFirst();
@@ -2476,7 +2722,7 @@ validateTributarySelectionUsesCombinedDistanceAndSeaD();
 validateTributaryMouthThirdScore();
 validateTributarySelectionPrefersFirstThirdMouthBonus();
 validateTributariesAddAdjacentBankRiver();
-validateRiverTopologyRegisteredInPipeline();
+validateRiverCorridorTopologyRegisteredInPipeline();
 validateRiverTopologySplitsMainRiverCell();
 validateRiverTopologySplitsTributaryMergeCellInThree();
 validateRiverTopologyRecomputesAreasAndColors();
@@ -2488,6 +2734,12 @@ validateSmoothRiversMovesInteriorNodesOnBezier();
 validateSmoothRiversReplayFrames();
 validateSmoothRiversReplayHydrationDrawsOverlayPoints();
 validateSmoothCoastRegisteredInPipeline();
+validateRiverCorridorTopologyRegisteredAfterSmoothCoast();
+validateRiverCorridorSettingsOwnership();
+validateRiverCorridorTopologyCarvesLandCells();
+validateRiverCorridorWidthChangesDeterministically();
+validateRiverCorridorCloneAndHydration();
+validateRiverCorridorTopologyReplayFrames();
 validateSmoothCoastSeparatesDiagonalLandContact();
 validateSmoothCoastKeepsNeighboringLandComponentTogether();
 validateSmoothCoastSeparatesThreeNonNeighborLandCells();

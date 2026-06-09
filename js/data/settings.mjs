@@ -6,6 +6,9 @@ export function Settings(seed="Hello world!") {
     seed: seed,
     createStepRng: (stepName) => createRNG(`${seed}:${stepName}`),
     size : 3000,
+    pipeline: {
+      maxStepMs: 5000,
+    },
     scatter: {
       nb: 1000,
       safeZone: 75,
@@ -46,8 +49,14 @@ export function Settings(seed="Hello world!") {
       seaDThreshold: 4,
       secondMouthMinDistance: 2,
     },
+    riverCells: {
+      primaryWidth: 40,
+      tributaryWidth: 24,
+    },
   }
 }
+
+const ALL_STEPS = ["Scatter", "Gather", "Lloyd", "Prune", "Coast", "Needles", "Rivers", "Tributaries", "Smooth coast", "River corridor topology"];
 
 export const SETTING_GROUPS = [
   {
@@ -57,7 +66,7 @@ export const SETTING_GROUPS = [
         path: "seed",
         label: "Seed",
         ownerStep: "Initialization",
-        usedBySteps: ["Scatter", "Gather", "Lloyd", "Prune", "Coast", "Needles", "Rivers", "Tributaries", "River topology", "Primary river smoothing", "Tributaries smoothing", "Smooth coast"],
+        usedBySteps: ALL_STEPS,
         type: "text",
         pattern: "[A-Za-z0-9_-]*",
         help: "Controls the deterministic random streams used by every generation step.",
@@ -66,11 +75,21 @@ export const SETTING_GROUPS = [
         path: "size",
         label: "Map size",
         ownerStep: "Initialization",
-        usedBySteps: ["Scatter", "Gather", "Lloyd", "Prune", "Coast", "Needles", "Rivers", "Tributaries", "River topology", "Primary river smoothing", "Tributaries smoothing", "Smooth coast"],
+        usedBySteps: ALL_STEPS,
         type: "number",
         min: 1,
         step: 25,
         help: "Sets the width and height of the square map in SVG units.",
+      },
+      {
+        path: "pipeline.maxStepMs",
+        label: "Step time limit",
+        ownerStep: "Initialization",
+        usedBySteps: ALL_STEPS,
+        type: "number",
+        min: 1,
+        step: 500,
+        help: "Stops generation with an error when one pipeline step exceeds this wall-clock time budget in milliseconds.",
       },
     ],
   },
@@ -376,6 +395,29 @@ export const SETTING_GROUPS = [
         min: 0,
         step: 1,
         help: "Keeps the second tributary mouth at least this many land-cell steps away from the first.",
+      },
+    ],
+  },
+  {
+    title: "River corridor topology",
+    settings: [
+      {
+        path: "riverCells.primaryWidth",
+        label: "Primary width",
+        ownerStep: "River corridor topology",
+        type: "number",
+        min: 1,
+        step: 1,
+        help: "Sets the total corridor width used when converting the primary river centerline into river cells.",
+      },
+      {
+        path: "riverCells.tributaryWidth",
+        label: "Tributary width",
+        ownerStep: "River corridor topology",
+        type: "number",
+        min: 1,
+        step: 1,
+        help: "Reserved width for the later tributary river-cell conversion.",
       },
     ],
   },

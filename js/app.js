@@ -1,5 +1,6 @@
 import {steps} from "./steps.mjs";
 import {runPipeline} from "./pipeline.mjs";
+import {Map as CityMap} from "./data/map.mjs";
 import {hydrateReplay, plainSettings, serializeMap} from "./replay-service.mjs";
 import {areaBoundaryPath} from "./data/area.mjs";
 import {orderedCellPoints} from "./data/cell.mjs";
@@ -29,6 +30,7 @@ let selectedStepIndex = steps.length - 1;
 let hoveredStepIndex = null;
 let stepSettingsOpen = false;
 let pendingRegeneration = null;
+let generationError = null;
 let replayFrameIndex = 0;
 let replayTimer = null;
 let replayWorker = null;
@@ -97,6 +99,14 @@ function resultForStep(index) {
 }
 
 function renderCurrentMap() {
+  if (generationError) {
+    const displayMap = map ?? new CityMap(settings);
+    applyCameraForSize(displayMap?.size ?? settings.size);
+    displayMap.clear(svgDomElt);
+    renderGenerationError();
+    return;
+  }
+
   const index = activeStepIndex();
   const result = resultForStep(index);
   const replayFrame = activeReplayFrame();
@@ -119,9 +129,17 @@ function regenerate(nextSettings = settings) {
   replayGenerationToken += 1;
   pendingReplayRequests.clear();
 
-  const result = runPipeline(settings);
-  map = result.map;
-  stepResults = result.stepResults;
+  try {
+    generationError = null;
+    const result = runPipeline(settings);
+    map = result.map;
+    stepResults = result.stepResults;
+  } catch (error) {
+    console.error("Generation failed", error);
+    generationError = error;
+    map = map ?? new CityMap(settings);
+    stepResults = [];
+  }
   selectedStepIndex = Math.min(selectedStepIndex, steps.length - 1);
   replayFrameIndex = 0;
   stopReplayPlayback();
@@ -984,6 +1002,25 @@ function toggleEntityLayer(layerId, typeNames) {
   renderCurrentMap();
 }
 
+function renderGenerationError() {
+  const details = document.getElementById("details");
+  if (!details) return;
+
+  details.innerHTML = "";
+  const header = document.createElement("div");
+  const title = document.createElement("h4");
+  const body = document.createElement("div");
+  const message = document.createElement("p");
+
+  header.className = "details-header";
+  title.textContent = "Generation Error";
+  header.append(title);
+  body.className = "details-body details-error";
+  message.textContent = generationError?.message ?? String(generationError ?? "Generation failed");
+  body.appendChild(message);
+  details.append(header, body);
+}
+
 function toggleEntityType(layerId, typeName) {
   const key = typeKey(layerId, typeName);
   const visible = isEntityTypeVisible(layerId, typeName);
@@ -1138,9 +1175,9 @@ function colorForType(typeName, layerId) {
     return "#8b5cf6";
   }
   if (typeName === TERRAIN_SEA || typeName === EDGE_TYPE_SEA || typeName === "terrain-sea") return "var(--sea-fill)";
+  if (typeName === "RIVER" || typeName === EDGE_TYPE_RIVER || typeName === "banks" || typeName === "mouth" || typeName === "crossing" || typeName === "terrain-river" || typeName === "terrain-banks" || typeName === "terrain-mouth" || typeName === "terrain-crossing") return "var(--sea-edge)";
   if (typeName === TERRAIN_LAND || typeName === "terrain-land") return "var(--land-fill)";
   if (typeName === TERRAIN_COAST || typeName === NODE_TYPE_COAST || typeName === EDGE_TYPE_COAST || typeName === "terrain-coast") return "var(--coast-edge)";
-  if (typeName === EDGE_TYPE_RIVER) return "var(--sea-edge)";
   if (layerId === "edges") return "var(--land-edge)";
   return colorFromString(String(typeName ?? layerId));
 }

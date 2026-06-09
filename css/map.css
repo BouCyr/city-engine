@@ -45,6 +45,10 @@
   fill: var(--land-fill);
 }
 
+.terrain-river {
+  fill: var(--sea-fill);
+}
+
 .edge {
   fill: none;
   stroke-width: var(--edge-stroke-width);
@@ -60,6 +64,25 @@
 
 .edge.terrain-coast {
   stroke: var(--coast-edge);
+}
+
+.edge.terrain-river,
+.edge.terrain-banks,
+.edge.terrain-mouth,
+.edge.terrain-crossing {
+  stroke: var(--sea-edge);
+}
+
+.edge.terrain-banks {
+  stroke-width: calc(var(--edge-stroke-width) * 1.15);
+}
+
+.edge.terrain-mouth {
+  stroke-width: calc(var(--edge-stroke-width) * 1.35);
+}
+
+.edge.terrain-crossing {
+  stroke: var(--land-edge);
 }
 
 .gather-overlay-polygon {

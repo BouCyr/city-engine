@@ -4,6 +4,8 @@ import {cloneDeepKeepFunctions} from "./data/clone.mjs";
 import {Area, AreaGroup} from "./data/area.mjs";
 import {AREA_NAME_LAND, AREA_NAME_SEA, TERRAIN_LAND, TERRAIN_SEA} from "./constants.mjs";
 
+export const DEFAULT_STEP_TIMEOUT_MS = 5000;
+
 export function runPipeline(settings, initialMap = new Map(settings), registeredSteps = steps) {
   let map = initialMap;
   const stepResults = [{
@@ -19,7 +21,25 @@ export function runPipeline(settings, initialMap = new Map(settings), registered
     };
     const beforeMetrics = collectMapMetrics(map);
     const startedAt = now();
+    const timeoutMs = normalizeStepTimeout(settings?.pipeline?.maxStepMs);
+    const deadline = startedAt + timeoutMs;
+    const checkDeadline = (label = step.title) => {
+      const elapsedMs = now() - startedAt;
+      if (elapsedMs > timeoutMs) {
+        const error = new Error(
+          `${step.title} exceeded ${Math.round(timeoutMs)}ms generation limit at ${label}`
+          + formatPerformanceMetrics(stepSettings.performanceMetrics)
+        );
+        error.performanceMetrics = stepSettings.performanceMetrics;
+        throw error;
+      }
+    };
+    stepSettings.deadline = deadline;
+    stepSettings.timeoutMs = timeoutMs;
+    stepSettings.performanceMetrics = {};
+    stepSettings.checkDeadline = checkDeadline;
     const stepMap = step.process(stepSettings, cloneDeepKeepFunctions(map));
+    checkDeadline();
     const durationMs = now() - startedAt;
     normalizeCellEdgeReferences(stepMap);
     rebuildTerrainAreaGroup(stepMap);
@@ -90,6 +110,26 @@ function hasRichTerrainAreas(terrainGroup) {
 
 function now() {
   return globalThis.performance?.now?.() ?? Date.now();
+}
+
+function normalizeStepTimeout(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : DEFAULT_STEP_TIMEOUT_MS;
+}
+
+function formatPerformanceMetrics(metrics) {
+  if (!metrics || typeof metrics !== "object" || Object.keys(metrics).length === 0) return "";
+  const pairs = Object.entries(metrics)
+    .filter(([, value]) => value !== undefined && typeof value !== "function")
+    .map(([key, value]) => `${key}=${formatMetricValue(value)}`);
+  return pairs.length > 0 ? `; metrics: ${pairs.join(", ")}` : "";
+}
+
+function formatMetricValue(value) {
+  if (typeof value === "number") return Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100);
+  if (Array.isArray(value)) return `[${value.map(formatMetricValue).join("|")}]`;
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }
 
 function collectMapMetrics(map) {
