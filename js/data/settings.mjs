@@ -50,8 +50,8 @@ export function Settings(seed="Hello world!") {
       secondMouthMinDistance: 2,
     },
     riverCells: {
-      primaryWidth: 40,
-      tributaryWidth: 24,
+      primaryWidth: 24,
+      tributaryWidth: 16,
     },
   }
 }
