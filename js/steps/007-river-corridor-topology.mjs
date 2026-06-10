@@ -47,9 +47,14 @@ export function computeRiverCorridorTopology(settings, map) {
     return map;
   }
 
-  const corridors = rivers
-    .map((river, index) => buildRiverCorridor(settings, river, index))
-    .filter((corridor) => corridor.geometry.length > 0);
+  const corridors = [];
+  const corridorByRiverId = new globalThis.Map();
+  for (const [index, river] of rivers.entries()) {
+    const corridor = buildRiverCorridor(settings, river, index, corridorByRiverId);
+    if (corridor.geometry.length === 0) continue;
+    corridors.push(corridor);
+    if (river?.id) corridorByRiverId.set(river.id, corridor);
+  }
   metrics.riversProcessed = corridors.length;
   metrics.centerlinePoints = corridors.reduce((sum, corridor) => sum + corridor.centerline.length, 0);
   metrics.corridorPoints = corridors.reduce((sum, corridor) => sum + corridor.ring.length, 0);
@@ -140,9 +145,14 @@ export function createReplay(settings, inputMap) {
     return {frames};
   }
 
-  const sourceCorridors = sourceRivers
-    .map((river, index) => buildRiverCorridor(settings, river, index))
-    .filter((corridor) => corridor.geometry.length > 0);
+  const sourceCorridors = [];
+  const sourceCorridorByRiverId = new globalThis.Map();
+  for (const [index, river] of sourceRivers.entries()) {
+    const corridor = buildRiverCorridor(settings, river, index, sourceCorridorByRiverId);
+    if (corridor.geometry.length === 0) continue;
+    sourceCorridors.push(corridor);
+    if (river?.id) sourceCorridorByRiverId.set(river.id, corridor);
+  }
 
   frames.push(replayFrame(
     map,
@@ -178,28 +188,34 @@ function tributaryHalfWidth(settings) {
   return safeWidth / 2;
 }
 
-function buildRiverCorridor(settings, river, index) {
-  const centerline = buildRiverCenterline(river);
+function buildRiverCorridor(settings, river, index, corridorByRiverId = new globalThis.Map()) {
+  const centerline = buildRiverCenterline(river, corridorByRiverId);
   if (centerline.length < 2) {
     return {river, centerline: [], smoothed: [], ring: [], geometry: []};
   }
   const smoothed = smoothPolyline(centerline, 2);
   const primary = isPrimaryRiver(river);
   const mergesMain = Boolean(river?.mouth?.riverCell);
-  const corridorCenterline = prependMergeArmPoint(smoothed, river);
-  const ring = buildCorridor(corridorCenterline, primary ? primaryHalfWidth(settings) : tributaryHalfWidth(settings), {
+  const ring = buildCorridor(smoothed, primary ? primaryHalfWidth(settings) : tributaryHalfWidth(settings), {
     extendStart: primary || !mergesMain,
     extendEnd: true,
   });
-  const geometry = isUsableRing(ring) ? polygonFromRing(ring) : [];
+  const baseGeometry = isUsableRing(ring) ? polygonFromRing(ring) : [];
+  const supportGeometry = mergesMain ? riverCorridorSupportGeometry(river) : [];
+  const geometry = baseGeometry.length > 0 && supportGeometry.length > 0
+    ? cleanGeometry(polygonClipping.intersection(baseGeometry, supportGeometry))
+    : baseGeometry;
+  const finalRing = geometryOuterRing(geometry) ?? ring;
   river.finalCenterline = smoothed.map(({x, y}) => ({x, y}));
-  river.finalCorridor = ring.map(([x, y]) => ({x, y}));
+  river.finalCorridor = finalRing.map(([x, y]) => ({x, y}));
   return {river, centerline, smoothed, ring, geometry};
 }
 
-function buildRiverCenterline(river) {
+function buildRiverCenterline(river, corridorByRiverId = new globalThis.Map()) {
   const cells = river.riverCells ?? [];
   const points = [];
+  const mergeArmPoint = resolveMergeArmPoint(river, corridorByRiverId);
+  if (mergeArmPoint) points.push(mergeArmPoint);
   const mouthPoint = riverMouthPoint(river);
   if (mouthPoint) points.push(mouthPoint);
   for (const cell of cells) points.push(H.cellCentroid(cell));
@@ -221,12 +237,33 @@ function riverMouthPoint(river) {
   return river.mouth?.cell ? H.cellCentroid(river.mouth.cell) : null;
 }
 
-function prependMergeArmPoint(centerline, river) {
-  if (!river?.mouth?.riverCell || centerline.length < 2) return centerline;
-  const mergeArmPoint = river.mouth?.riverExitPoint ?? H.cellCentroid(river.mouth.riverCell);
-  if (!mergeArmPoint) return centerline;
-  if (H.distance(mergeArmPoint, centerline[0]) <= EPSILON) return centerline;
-  return [mergeArmPoint, ...centerline];
+function resolveMergeArmPoint(river, corridorByRiverId = new globalThis.Map()) {
+  if (!river?.mouth?.riverCell) return null;
+  const mergeCell = river.mouth.riverCell;
+  const sourceRiverId = river.sourceRiverId;
+  const sourceCorridor = sourceRiverId ? corridorByRiverId.get(sourceRiverId) : null;
+  const fallbackPoint = river.mouth?.riverExitPoint ?? H.cellCentroid(mergeCell);
+  if (!sourceCorridor?.smoothed?.length) return fallbackPoint;
+
+  const mergeCellRing = cleanupRing(orderedCellPoints(mergeCell).map(toPair));
+  if (mergeCellRing.length < 3) return fallbackPoint;
+
+  const sampledPoints = samplePolyline(sourceCorridor.smoothed, 24)
+    .filter((point) => pointInRing(toPair(point), mergeCellRing));
+  if (sampledPoints.length === 0) return fallbackPoint;
+
+  return nearestPoint(sampledPoints, fallbackPoint);
+}
+
+function riverCorridorSupportGeometry(river) {
+  const supportCells = uniqueCells([
+    ...(river?.riverCells ?? []),
+    river?.mouth?.riverCell,
+  ]);
+  const polygons = supportCells
+    .map(cellGeometry)
+    .filter((geometry) => geometry.length > 0);
+  return polygons.length > 0 ? cleanGeometry(polygonClipping.union(...polygons)) : [];
 }
 
 function riverExitPoint(river) {
@@ -597,6 +634,65 @@ function cellIntersectsGeometry(cell, geometry) {
   return geometryPolygonCount(cleanGeometry(polygonClipping.intersection(polygonFromRing(ring), geometry))) > 0;
 }
 
+function cellGeometry(cell) {
+  const ring = cleanupRing(orderedCellPoints(cell).map(toPair));
+  return ring.length >= 3 ? polygonFromRing(ring) : [];
+}
+
+function geometryOuterRing(geometry) {
+  let bestRing = null;
+  let bestArea = -Infinity;
+  for (const polygon of geometry ?? []) {
+    const ring = cleanupRing(polygon[0] ?? []);
+    const area = Math.abs(signedArea(ring));
+    if (ring.length < 3 || area <= bestArea) continue;
+    bestRing = ring;
+    bestArea = area;
+  }
+  return bestRing;
+}
+
+function samplePolyline(points, subdivisions = 16) {
+  const result = [];
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index];
+    const end = points[index + 1];
+    const steps = index === points.length - 2 ? subdivisions : subdivisions - 1;
+    for (let step = 0; step <= steps; step += 1) {
+      const ratio = subdivisions === 0 ? 0 : step / subdivisions;
+      result.push({
+        x: start.x + (end.x - start.x) * ratio,
+        y: start.y + (end.y - start.y) * ratio,
+      });
+    }
+  }
+  return removeDuplicatePointObjects(result);
+}
+
+function pointInRing(point, ring) {
+  let inside = false;
+  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
+    const [x1, y1] = ring[index];
+    const [x2, y2] = ring[previous];
+    const intersects = ((y1 > point[1]) !== (y2 > point[1]))
+      && (point[0] < ((x2 - x1) * (point[1] - y1)) / ((y2 - y1) || EPSILON) + x1);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function nearestPoint(points, target) {
+  let bestPoint = null;
+  let bestDistance = Infinity;
+  for (const point of points ?? []) {
+    const distance = H.distance(point, target);
+    if (distance >= bestDistance) continue;
+    bestPoint = point;
+    bestDistance = distance;
+  }
+  return bestPoint;
+}
+
 function bboxForGeometry(geometry) {
   const points = [];
   for (const polygon of geometry ?? []) {
@@ -613,6 +709,17 @@ function uniquePairs(points) {
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(point);
+  }
+  return result;
+}
+
+function uniqueCells(cells) {
+  const seen = new Set();
+  const result = [];
+  for (const cell of cells ?? []) {
+    if (!cell?.id || seen.has(cell.id)) continue;
+    seen.add(cell.id);
+    result.push(cell);
   }
   return result;
 }
