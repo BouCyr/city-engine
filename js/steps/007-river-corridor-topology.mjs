@@ -245,14 +245,31 @@ function resolveMergeArmPoint(river, corridorByRiverId = new globalThis.Map()) {
   const fallbackPoint = river.mouth?.riverExitPoint ?? H.cellCentroid(mergeCell);
   if (!sourceCorridor?.smoothed?.length) return fallbackPoint;
 
+  const downstreamEdge = downstreamMergeEdge(sourceCorridor.river, mergeCell);
+  if (downstreamEdge) {
+    const edgeIntersection = polylineEdgeIntersection(
+      sourceCorridor.smoothed,
+      toPair(downstreamEdge.start),
+      toPair(downstreamEdge.end),
+    );
+    if (edgeIntersection) return {x: edgeIntersection[0], y: edgeIntersection[1]};
+  }
+
   const mergeCellRing = cleanupRing(orderedCellPoints(mergeCell).map(toPair));
   if (mergeCellRing.length < 3) return fallbackPoint;
 
   const sampledPoints = samplePolyline(sourceCorridor.smoothed, 24)
     .filter((point) => pointInRing(toPair(point), mergeCellRing));
   if (sampledPoints.length === 0) return fallbackPoint;
-
   return nearestPoint(sampledPoints, fallbackPoint);
+}
+
+function downstreamMergeEdge(sourceRiver, mergeCell) {
+  const cells = sourceRiver?.riverCells ?? [];
+  const index = cells.indexOf(mergeCell);
+  if (index < 0) return null;
+  const downstreamCell = cells[index - 1];
+  return downstreamCell ? H.cellsEdge(mergeCell, downstreamCell) : null;
 }
 
 function riverCorridorSupportGeometry(river) {
@@ -679,6 +696,34 @@ function pointInRing(point, ring) {
     if (intersects) inside = !inside;
   }
   return inside;
+}
+
+function polylineEdgeIntersection(points, edgeStart, edgeEnd) {
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const intersection = segmentIntersection(toPair(points[index]), toPair(points[index + 1]), edgeStart, edgeEnd);
+    if (intersection) return intersection;
+  }
+  return null;
+}
+
+function segmentIntersection(a1, a2, b1, b2) {
+  const dax = a2[0] - a1[0];
+  const day = a2[1] - a1[1];
+  const dbx = b2[0] - b1[0];
+  const dby = b2[1] - b1[1];
+  const denominator = dax * dby - day * dbx;
+  if (Math.abs(denominator) <= EPSILON) return null;
+
+  const dx = b1[0] - a1[0];
+  const dy = b1[1] - a1[1];
+  const ua = (dx * dby - dy * dbx) / denominator;
+  const ub = (dx * day - dy * dax) / denominator;
+  if (ua < -EPSILON || ua > 1 + EPSILON || ub < -EPSILON || ub > 1 + EPSILON) return null;
+
+  return [
+    roundCoord(a1[0] + ua * dax),
+    roundCoord(a1[1] + ua * day),
+  ];
 }
 
 function nearestPoint(points, target) {

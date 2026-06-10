@@ -458,10 +458,10 @@ function mainRiverExitPoint(mainRiver, mergeCell) {
   const index = cells.indexOf(mergeCell);
   if (index < 0) return null;
 
-  const next = cells[index + 1];
-  if (next) {
-    const edge = H.cellsEdge(mergeCell, next);
-    return edge ? H.midpoint(edge.start, edge.end) : H.cellCentroid(next);
+  const downstream = cells[index - 1];
+  if (downstream) {
+    const edge = H.cellsEdge(mergeCell, downstream);
+    return edge ? H.midpoint(edge.start, edge.end) : H.cellCentroid(downstream);
   }
 
   const exitEdge = mergeCell.edges.find(edge => edge.flags?.has(MAP_FLAG_BOUNDARY));

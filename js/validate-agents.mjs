@@ -1948,7 +1948,7 @@ function validateRiverCorridorTopologyCarvesLandCells() {
   assert.ok(tributary.riverCells.every((cell) => result.cells.includes(cell)));
   assert.ok(tributary.riverCells.every((cell) => cell.type === TERRAIN_RIVER));
   assert.ok(tributary.mouth.riverCell?.type === TERRAIN_RIVER);
-  const tributaryMergeArmPoint = {x: 300, y: 150};
+  const tributaryMergeArmPoint = {x: 200, y: 150};
   assert.ok(Math.hypot(
     tributary.finalCenterline[0].x - tributaryMergeArmPoint.x,
     tributary.finalCenterline[0].y - tributaryMergeArmPoint.y,
