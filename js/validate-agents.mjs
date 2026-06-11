@@ -26,6 +26,7 @@ import {
   CELL_TYPE_CELL,
   EDGE_TYPE_BANK,
   EDGE_TYPE_CROSSING,
+  EDGE_TYPE_LAND,
   EDGE_TYPE_MOUTH,
   EDGE_TYPE_RIVER,
   EDGE_TYPE_VORONOI,
@@ -1978,10 +1979,16 @@ function validateRiverCorridorTopologyCarvesLandCells() {
   const crossingNodes = result.nodes.filter((node) => node.flags?.has(NODE_FLAG_CROSSING));
   const crossingEnds = result.nodes.filter((node) => node.type === NODE_TYPE_CROSSING_END);
   const crossingEdges = result.edges.filter((edge) => edge.type === EDGE_TYPE_CROSSING);
+  const crossingLandNodes = result.nodes.filter((node) => {
+    const edges = [...(node.edges ?? [])].filter((edge) => result.edges.includes(edge));
+    return edges.some((edge) => edge.type === EDGE_TYPE_CROSSING) && edges.some((edge) => edge.type === EDGE_TYPE_LAND);
+  });
 
   assert.ok(crossingNodes.length >= 2);
   assert.ok(crossingEnds.length >= 2);
   assert.ok(crossingEnds.every((node) => node.flags.has(NODE_FLAG_CROSSING)));
+  assert.ok(crossingLandNodes.length >= 1);
+  assert.ok(crossingLandNodes.every((node) => node.type === NODE_TYPE_CROSSING_END));
   assert.equal(river.topologyEdges.length, 0);
   assert.equal(tributary.topologyEdges.length, 0);
   assert.ok(river.riverCells.length >= 1);

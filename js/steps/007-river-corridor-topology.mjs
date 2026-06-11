@@ -696,7 +696,7 @@ function classifyEdgesAndNodes(map) {
 
   for (const node of map.nodes) {
     const edges = [...(node.edges ?? [])].filter((edge) => map.edges.includes(edge));
-    if (node.type === NODE_TYPE_CROSSING_END || (node.flags?.has?.(NODE_FLAG_CROSSING) && edges.some((edge) => edge.type === EDGE_TYPE_CROSSING))) {
+    if (isCrossingEndNode(node, edges)) {
       node.type = NODE_TYPE_CROSSING_END;
       node.flags = ensureSet(node.flags);
       node.flags.add(NODE_FLAG_CROSSING);
@@ -714,6 +714,14 @@ function classifyEdgesAndNodes(map) {
     }
     node.draw = null;
   }
+}
+
+function isCrossingEndNode(node, edges) {
+  const hasCrossing = edges.some((edge) => edge.type === EDGE_TYPE_CROSSING);
+  if (!hasCrossing) return false;
+  if (node.type === NODE_TYPE_CROSSING_END) return true;
+  if (node.flags?.has?.(NODE_FLAG_CROSSING)) return true;
+  return edges.some((edge) => edge.type === EDGE_TYPE_LAND);
 }
 
 function rebuildTerrainAreas(map) {
