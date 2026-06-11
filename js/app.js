@@ -7,6 +7,7 @@ import {orderedCellPoints} from "./data/cell.mjs";
 import {
   clearParishSelection,
   createParishInteractionState,
+  describeParishPreviewPath,
   getParishPreviewPath,
   isSelectableParishStartNode,
   PARISHES_STEP_TITLE,
@@ -26,6 +27,7 @@ import {
   NODE_TYPE_CROSSING,
   NODE_TYPE_CROSSING_END,
   NODE_TYPE_LAND,
+  NODE_TYPE_PARISH_CENTER,
   NODE_TYPE_POI,
   NODE_TYPE_RIVER,
   NODE_TYPE_RIVER_JUNCTION,
@@ -287,6 +289,12 @@ function renderStepDetails(step, result) {
     return;
   }
 
+  const parishPath = currentParishPreviewDescription();
+  if (parishPath) {
+    renderParishPathDetails(body, parishPath);
+    return;
+  }
+
   const hovered = currentHoveredDescription();
   if (hovered) {
     renderHoveredEntityDetails(body, hovered);
@@ -354,6 +362,34 @@ function currentHoveredDescription() {
     return null;
   }
   return describeHoveredEntity(hoverState.index, hoverState.hovered);
+}
+
+function currentParishPreviewDescription() {
+  if (!isParishPreviewEnabled()) {
+    return null;
+  }
+  return describeParishPreviewPath(parishState);
+}
+
+function renderParishPathDetails(body, preview) {
+  const section = document.createElement("section");
+  const title = document.createElement("h4");
+
+  section.className = "entity-details";
+  title.className = "entity-details-title";
+  title.textContent = "Path details";
+  section.appendChild(title);
+
+  appendEntityDetailRow(section, "Start node", preview.details.startNodeId);
+  appendEntityDetailRow(section, "Target node", preview.details.targetNodeId);
+  appendEntityDetailRow(section, "Length", formatHoverLength(preview.details.totalLength));
+  appendEntityDetailRow(section, "Cost", formatPathCost(preview.details.totalCost));
+  appendEntityDetailRow(section, "Edges", formatCount(preview.details.edgeCount));
+  appendEntityDetailRow(section, "Edge ids", preview.details.edgeIds, {kbdList: true});
+  appendEntityDetailRow(section, "Nodes", formatCount(preview.details.nodeCount));
+  appendEntityDetailRow(section, "Node ids", preview.details.nodeIds, {kbdList: true});
+
+  body.appendChild(section);
 }
 
 function renderHoveredEntityDetails(body, hovered) {
@@ -466,6 +502,11 @@ function formatHoverArea(value) {
 function formatHoverLength(value) {
   if (!Number.isFinite(value)) return "0";
   return `${Math.round(value * 100) / 100} svg units`;
+}
+
+function formatPathCost(value) {
+  if (!Number.isFinite(value)) return "0";
+  return String(Math.round(value * 100) / 100);
 }
 
 function formatTypeCountList(entries) {
@@ -1193,7 +1234,7 @@ function seedDefaultNodeDisplayTypes(displayMap) {
     if (mapDisplayState.defaultNodeTypes.has(key)) continue;
 
     mapDisplayState.defaultNodeTypes.add(key);
-    if (node.type === NODE_TYPE_CROSSING || node.type === NODE_TYPE_CROSSING_END) {
+    if (node.type === NODE_TYPE_CROSSING || node.type === NODE_TYPE_CROSSING_END || node.type === NODE_TYPE_PARISH_CENTER) {
       if (!renderedTypeKeys.has(key)) {
         mapDisplayState.debugTypes.add(key);
       }
@@ -1581,7 +1622,7 @@ function colorForType(typeName, layerId) {
   if (layerId === "nodes") {
     if (typeName === NODE_TYPE_COAST) return "var(--coast-edge)";
     if (typeName === NODE_TYPE_RIVER || typeName === NODE_TYPE_RIVER_JUNCTION) return "var(--sea-edge)";
-    if (typeName === NODE_TYPE_LAND) return "var(--land-edge)";
+    if (typeName === NODE_TYPE_LAND || typeName === NODE_TYPE_PARISH_CENTER) return "var(--land-edge)";
     if (typeName === NODE_TYPE_CROSSING || typeName === NODE_TYPE_CROSSING_END) return "var(--land-edge)";
     return "#8b5cf6";
   }
@@ -1595,6 +1636,7 @@ function colorForType(typeName, layerId) {
 }
 
 function nodeRadiusForType(typeName, baseRadius = DEFAULT_NODE_RADIUS) {
+  if (typeName === NODE_TYPE_PARISH_CENTER) return baseRadius === DEFAULT_NODE_RADIUS ? TERRAIN_NODE_RADIUS * 2.2 : baseRadius;
   if (!isTerrainNodeType(typeName)) return baseRadius;
   return baseRadius === DEFAULT_NODE_RADIUS ? TERRAIN_NODE_RADIUS : baseRadius / 2;
 }
@@ -1604,6 +1646,7 @@ function isTerrainNodeType(typeName) {
     || typeName === NODE_TYPE_RIVER
     || typeName === NODE_TYPE_RIVER_JUNCTION
     || typeName === NODE_TYPE_LAND
+    || typeName === NODE_TYPE_PARISH_CENTER
     || typeName === NODE_TYPE_CROSSING
     || typeName === NODE_TYPE_CROSSING_END;
 }

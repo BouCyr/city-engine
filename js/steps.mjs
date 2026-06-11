@@ -169,15 +169,18 @@ export const steps = [
   {
     title: "Parishes",
     process: PARISHES.process,
-    description: () => [
-      `This final step does not alter generation yet. It enables a parish-routing inspection mode on the current map.`,
-      `Left-click a node connected to at least one <em>LAND</em> edge to set the parish start point, then hover another node to preview the weighted shortest path over <em>LAND</em> and <em>CROSSING</em> edges.`,
+    createReplay: PARISHES.createReplay,
+    description: (settings) => [
+      `This final step splits land into isolated land masses delimited by coast, rivers, crossings, and the map boundary, then dispatches parishes independently inside each land mass.`,
+      `Each land mass receives one parish per <em>${settings.parishes?.parishSize ?? 16}</em> land cells, rounded up with a minimum of one, and graph-distance k-means assignment runs until convergence or until its 200ms computation budget is reached.`,
+      `Left-click a node connected to at least one <em>LAND</em> edge to set a preview start point, then hover another node to preview a weighted shortest path over <em>LAND</em> edges only.`,
       `Right-click anywhere on the map clears the start point and the current preview without changing the generated graph.`,
     ],
-    explanation: () => [
-      `Parishes is currently a UI-only inspection step. Its process function returns the incoming map unchanged and does not add replay data or mutate graph entities.`,
-      `While this step is selected, the map supports weighted path preview: <em>LAND</em> edges cost 12 times their geometric length and <em>CROSSING</em> edges cost 60 times their geometric length.`,
-      `The selected start node stays marked until it is cleared or the displayed step map changes.`,
+    explanation: (settings) => [
+      `Parishes first finds connected components of <em>LAND</em> cells using only shared <em>LAND</em> edges. Coast edges, river banks, crossings, and map boundaries stop connectivity, so parish assignments cannot spill from one land mass to another.`,
+      `For each land mass, the number of parishes is <em>ceil(cell count / ${settings.parishes?.parishSize ?? 16})</em>. K-means assigns each land cell by shortest graph distance from the closest map node to each current parish center, with temporary LAND-cost links from every cell centroid to that cell's nodes.`,
+      `LAND and temporary centroid links cost 12 times geometric length. COAST edges are allowed at double LAND cost, while water, river, boundary, and crossing edges are blocked.`,
+      `While this step is selected, the map still supports weighted path preview over <em>LAND</em> edges only, with each edge costing 12 times its geometric length.`,
     ],
     renderExplanationExtras: null,
   }

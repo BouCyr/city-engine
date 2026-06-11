@@ -17,6 +17,7 @@ export const NODE_TYPE_RIVER = "river";
 export const NODE_TYPE_RIVER_JUNCTION = "river-junction";
 export const NODE_TYPE_CROSSING = "CROSSING";
 export const NODE_TYPE_CROSSING_END = "CROSSING_END";
+export const NODE_TYPE_PARISH_CENTER = "parish_center";
 
 export const CELL_TYPE_CELL = "Cell";
 export const TERRAIN_SEA = "SEA";
@@ -54,6 +55,8 @@ export const MAP_FLAG_RIVER = "RIVER";
 export const MAP_FLAG_NEEDLE = "NEEDLE";
 export const MAP_FLAG_FIXED = "FIXED";
 export const MAP_FLAG_COAST_GAP = "COAST_GAP";
+export const MAP_FLAG_PARISH_CENTER = "PARISH_CENTER";
+export const MAP_TAG_PARISH = "parish";
 export const NODE_FLAG_CROSSING = "crossing";
 
 export const NODE_TYPE_TEST_SPLIT = "split";
@@ -70,3 +73,4 @@ export const OVERLAY_TYPE_GATHER = "gather";
 export const OVERLAY_TYPE_COAST_FIELD = "coast-field";
 export const OVERLAY_TYPE_COAST_CENTROIDS = "coast-centroids";
 export const OVERLAY_TYPE_RIVERS = "rivers";
+export const OVERLAY_TYPE_PARISHES = "parishes";

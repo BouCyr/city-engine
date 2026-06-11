@@ -9,10 +9,10 @@ import {Node, Poi} from "./data/nodes.mjs";
 import {
   buildParishPathGraph,
   createParishInteractionState,
+  describeParishPreviewPath,
   getParishPreviewPath,
   isSelectableParishStartNode,
   PARISHES_STEP_TITLE,
-  PARISH_CROSSING_WEIGHT_FACTOR,
   PARISH_LAND_WEIGHT_FACTOR,
   setParishPreviewTarget,
   setParishStartNode,
@@ -29,6 +29,7 @@ import {
   buildReplayPayload,
   hydrateMap,
   hydrateReplay,
+  hydrateSettings,
   plainSettings,
   serializeMap,
   serializeReplay,
@@ -43,6 +44,7 @@ import {
   AREA_NAME_SEA,
   CELL_TYPE_CELL,
   EDGE_TYPE_BANK,
+  EDGE_TYPE_COAST,
   EDGE_TYPE_CROSSING,
   EDGE_TYPE_LAND,
   EDGE_TYPE_MOUTH,
@@ -52,13 +54,18 @@ import {
   MAP_FLAG_BOUNDARY,
   MAP_FLAG_COAST_GAP,
   MAP_FLAG_FIXED,
+  MAP_FLAG_PARISH_CENTER,
   MAP_FLAG_RIVER,
+  MAP_TAG_PARISH,
   NODE_FLAG_CROSSING,
   MAP_FLAG_TEST,
   MAP_FLAG_TEST_GATE,
   MAP_FLAG_TEST_PRIMARY,
   NODE_TYPE_CROSSING,
   NODE_TYPE_CROSSING_END,
+  NODE_TYPE_COAST,
+  NODE_TYPE_LAND,
+  NODE_TYPE_PARISH_CENTER,
   NODE_TYPE_RIVER,
   NODE_TYPE_RIVER_JUNCTION,
   NODE_TYPE_TEST_FIXTURE,
@@ -68,6 +75,7 @@ import {
   EDGE_TYPE_TEST_FIXTURE,
   EDGE_TYPE_TEST_GRID,
   EDGE_TYPE_TEST_ROAD,
+  OVERLAY_TYPE_PARISHES,
   OVERLAY_TYPE_RIVERS,
   RIVER_ROLE_FIRST_TRIBUTARY,
   RIVER_ROLE_PRIMARY,
@@ -116,6 +124,14 @@ import {
   createReplay as createRiverCorridorTopologyReplay,
   computeRiverCorridorTopology,
 } from "./steps/007-river-corridor-topology.mjs";
+import {
+  buildLandMassDistanceGraph,
+  computeParishes,
+  createReplay as createParishesReplay,
+  findLandMasses,
+  KMEANS_MAX_COMPUTE_MS,
+  process as computeParishesStep,
+} from "./steps/010-parishes.mjs";
 
 function createSvgProbe() {
   const calls = [];
@@ -126,8 +142,17 @@ function createSvgProbe() {
         namespace,
         name,
         attrs: {},
+        children: [],
         setAttribute(key, value) {
           this.attrs[key] = value;
+        },
+        appendChild(element) {
+          this.children.push(element);
+        },
+        querySelector() {
+          return null;
+        },
+        remove() {
         },
       };
     },
@@ -150,6 +175,10 @@ function createSvgProbe() {
     calls,
     layers,
     svg: {
+      firstChild: null,
+      insertBefore(element) {
+        calls.push({...element, layerId: "defs"});
+      },
       getElementById(id) {
         return getLayer(id);
       },
@@ -241,6 +270,50 @@ function createParishFixture() {
   map.nodes.push(a, b, c, d, e, f);
   map.edges.push(ab, ac, cd, bd, ef);
   return {map, nodes: {a, b, c, d, e, f}, edges: {ab, ac, cd, bd, ef}};
+}
+
+function createLandCellStrip(count, sharedTypes = {}) {
+  const settings = new Settings("parish-strip");
+  const map = new Map(settings);
+  const topNodes = [];
+  const bottomNodes = [];
+  const verticalEdges = [];
+  const cellWidth = 10;
+  const cellHeight = 10;
+
+  for (let index = 0; index <= count; index += 1) {
+    topNodes.push(Node(`top-${index}`, index * cellWidth, 0, NODE_TYPE_LAND));
+    bottomNodes.push(Node(`bottom-${index}`, index * cellWidth, cellHeight, NODE_TYPE_LAND));
+  }
+  map.nodes.push(...topNodes, ...bottomNodes);
+
+  for (let index = 0; index <= count; index += 1) {
+    const type = index > 0 && index < count ? sharedTypes[index] ?? EDGE_TYPE_LAND : EDGE_TYPE_LAND;
+    verticalEdges.push(Edge(`vertical-${index}`, topNodes[index], bottomNodes[index], type));
+  }
+
+  for (let index = 0; index < count; index += 1) {
+    const top = Edge(`top-edge-${index}`, topNodes[index], topNodes[index + 1], EDGE_TYPE_LAND);
+    const right = verticalEdges[index + 1];
+    const bottom = Edge(`bottom-edge-${index}`, bottomNodes[index + 1], bottomNodes[index], EDGE_TYPE_LAND);
+    const left = verticalEdges[index];
+    const cell = Cell(`cell-${String(index).padStart(2, "0")}`, [top, right, bottom, left]);
+    cell.type = TERRAIN_LAND;
+
+    top.leftCell = cell;
+    bottom.leftCell = cell;
+    if (!left.leftCell) left.leftCell = cell;
+    else left.rightCell = cell;
+    if (!right.leftCell) right.leftCell = cell;
+    else right.rightCell = cell;
+
+    map.edges.push(top, bottom);
+    map.cells.push(cell);
+  }
+
+  map.edges.push(...verticalEdges);
+  map.verticalEdges = verticalEdges;
+  return map;
 }
 
 function validateCloneIdentityAndFlags() {
@@ -582,23 +655,41 @@ function validateHoverIndexBuildsConnectedCellsAndNeighboringNodesForNode() {
   assert.deepEqual(hovered.details.tags, [MAP_FLAG_TEST_GATE]);
 }
 
-function validateParishesRegisteredAsFinalNoOpStep() {
+function validateHoverIndexFormatsKeyValueTags() {
+  const {map} = createHoverFixture();
+  const cell = map.cells.find((candidate) => candidate.id === "left");
+  cell.flags.add({key: MAP_TAG_PARISH, value: "parish-test"});
+
+  const index = buildHoverIndex(map);
+  const hovered = describeHoveredEntity(index, {kind: "cell", id: cell.id});
+
+  assert.ok(hovered.details.tags.includes(`${MAP_TAG_PARISH}=parish-test`));
+}
+
+function validateParishesRegisteredAsFinalStepWithReplay() {
   const settings = new Settings("parishes-step");
   const map = new Map(settings);
   const step = steps.at(-1);
 
   assert.equal(step?.title, PARISHES_STEP_TITLE);
-  assert.equal(step?.createReplay, undefined);
-  assert.equal(step?.process(settings, map), map);
+  assert.equal(typeof step?.createReplay, "function");
+  assert.equal(step?.process({
+    ...settings,
+    rng: settings.createStepRng(PARISHES_STEP_TITLE),
+  }, map), map);
+  assert.ok(map.parishSummary);
 }
 
 function validateParishesStepUsesGlobalSettingsOnly() {
   const parishesSettings = settingsForStep(PARISHES_STEP_TITLE);
+  const parishSize = parishesSettings.find(({definition}) => definition.path === "parishes.parishSize");
 
   assert.deepEqual(
     parishesSettings.map(({definition}) => definition.path).sort(),
-    ["pipeline.maxStepMs", "seed", "size"]
+    ["parishes.parishSize", "pipeline.maxStepMs", "seed", "size"]
   );
+  assert.equal(parishSize?.editable, true);
+  assert.equal(parishSize?.sourceStep, PARISHES_STEP_TITLE);
 }
 
 function validateWeightedGraphFiltersAndWeightsParishEdges() {
@@ -608,9 +699,9 @@ function validateWeightedGraphFiltersAndWeightsParishEdges() {
 
   assert.deepEqual(
     fromA.map((entry) => entry.edge.id).sort(),
-    ["AB", "AC"]
+    ["AC"]
   );
-  assert.equal(fromA.find((entry) => entry.edge === edges.ab)?.weight, PARISH_CROSSING_WEIGHT_FACTOR * 3);
+  assert.equal(fromA.find((entry) => entry.edge === edges.ab), undefined);
   assert.equal(fromA.find((entry) => entry.edge === edges.ac)?.weight, PARISH_LAND_WEIGHT_FACTOR * 4);
   assert.equal(graph.getNeighbors(nodes.e).length, 0);
 }
@@ -685,6 +776,212 @@ function validateParishPreviewReconstructsOrderedEdgeChain() {
   assert.ok(preview);
   assert.deepEqual(preview.nodes.map((node) => node.id), ["A", "C", "D"]);
   assert.deepEqual(preview.edges.map((edge) => edge.id), [edges.ac.id, edges.cd.id]);
+}
+
+function validateParishPreviewDescriptionIncludesLengthAndCost() {
+  const {map, nodes} = createParishFixture();
+  const state = createParishInteractionState();
+
+  updateParishGraphCache(state, map);
+  setParishStartNode(state, nodes.a.id);
+  setParishPreviewTarget(state, nodes.d.id);
+  const preview = describeParishPreviewPath(state);
+
+  assert.ok(preview);
+  assert.equal(preview.details.startNodeId, "A");
+  assert.equal(preview.details.targetNodeId, "D");
+  assert.equal(preview.details.nodeCount, 3);
+  assert.equal(preview.details.edgeCount, 2);
+  assert.deepEqual(preview.details.nodeIds, ["A", "C", "D"]);
+  assert.deepEqual(preview.details.edgeIds, ["AC", "CD"]);
+  assert.equal(preview.details.totalLength, 7);
+  assert.equal(preview.details.totalCost, PARISH_LAND_WEIGHT_FACTOR * 7);
+}
+
+function validateParishLandMassesDoNotCrossCrossingEdges() {
+  const map = createLandCellStrip(2, {1: EDGE_TYPE_CROSSING});
+  const landMasses = findLandMasses(map);
+
+  assert.equal(landMasses.length, 2);
+  assert.deepEqual(landMasses.map((landMass) => landMass.cells.map((cell) => cell.id)), [
+    ["cell-00"],
+    ["cell-01"],
+  ]);
+}
+
+function validateParishDistanceGraphUsesTemporaryCentroidsAndWeightedCoast() {
+  const coastMap = createLandCellStrip(2, {1: EDGE_TYPE_COAST});
+  const coastItems = coastMap.cells.map((cell) => ({
+    cell,
+    point: H.cellCentroid(cell),
+  }));
+  const coastGraph = buildLandMassDistanceGraph(coastItems);
+  const sharedCoast = coastMap.verticalEdges[1];
+  const coastEntry = coastGraph.getNeighbors(sharedCoast.start)
+    .find((entry) => entry.edge === sharedCoast);
+  const tempEntry = coastGraph.getNeighbors("parish-cell-centroid-cell-00")
+    .find((entry) => entry.edge.type === EDGE_TYPE_LAND);
+
+  assert.equal(coastEntry.weight, 24 * 10);
+  assert.ok(tempEntry);
+  assert.equal(Math.round(tempEntry.weight * 1000), Math.round(12 * tempEntry.length * 1000));
+
+  const crossingMap = createLandCellStrip(2, {1: EDGE_TYPE_CROSSING});
+  const crossingItems = crossingMap.cells.map((cell) => ({
+    cell,
+    point: H.cellCentroid(cell),
+  }));
+  const crossingGraph = buildLandMassDistanceGraph(crossingItems);
+  const sharedCrossing = crossingMap.verticalEdges[1];
+
+  assert.equal(
+    crossingGraph.getNeighbors(sharedCrossing.start).some((entry) => entry.edge === sharedCrossing),
+    false
+  );
+}
+
+function validateParishCountUsesConfiguredParishSize() {
+  const settings = new Settings("parish-count");
+  const map = createLandCellStrip(settings.parishes.parishSize + 1);
+  const result = computeParishes({
+    ...settings,
+    rng: settings.createStepRng(PARISHES_STEP_TITLE),
+  }, map);
+
+  assert.equal(result.landMasses.length, 1);
+  assert.equal(result.parishCount, 2);
+  assert.equal(result.cappedByTime, false);
+  assert.ok(result.computeMs <= KMEANS_MAX_COMPUTE_MS);
+  computeParishesStep({
+    ...settings,
+    rng: settings.createStepRng(PARISHES_STEP_TITLE),
+  }, map);
+  assert.equal(new Set(map.cells.map((cell) => cell.parishId)).size, 2);
+  assert.ok(map.cells.every((cell) => cell.landMassId === "land-mass-0"));
+  assert.equal(map.parishSummary.maxComputeMs, KMEANS_MAX_COMPUTE_MS);
+  assert.equal(map.parishSummary.parishSize, settings.parishes.parishSize);
+}
+
+function validateParishStepTagsCellsAndCenterNodes() {
+  const settings = new Settings("parish-tags");
+  const map = createLandCellStrip(2, {1: EDGE_TYPE_CROSSING});
+  map.drawOverlay = () => {};
+
+  computeParishesStep({
+    ...settings,
+    rng: settings.createStepRng(PARISHES_STEP_TITLE),
+  }, map);
+
+  assert.deepEqual(map.cells.map((cell) => cell.parishId).sort(), ["parish-0-0", "parish-1-0"]);
+  assert.ok(map.cells.every((cell) => hasKeyValueTag(cell.flags, MAP_TAG_PARISH, cell.parishId)));
+  assert.equal(map.nodes.filter((node) => node.flags?.has(MAP_FLAG_PARISH_CENTER)).length, 2);
+  assert.ok(map.nodes.filter((node) => node.flags?.has(MAP_FLAG_PARISH_CENTER)).every((node) => node.type === NODE_TYPE_PARISH_CENTER));
+  assert.ok(map.nodes.filter((node) => node.flags?.has(MAP_FLAG_PARISH_CENTER)).every((node) => node.parishCenterBaseType === NODE_TYPE_LAND));
+  assert.equal(map.drawOverlay, undefined);
+
+  const hydrated = hydrateMap(structuredClone(serializeMap(map)));
+  assert.ok(hydrated.cells.every((cell) => hasKeyValueTag(cell.flags, MAP_TAG_PARISH, cell.parishId)));
+  assert.equal(hydrated.nodes.filter((node) => node.flags?.has(MAP_FLAG_PARISH_CENTER)).length, 2);
+  assert.ok(hydrated.nodes.filter((node) => node.flags?.has(MAP_FLAG_PARISH_CENTER)).every((node) => node.type === NODE_TYPE_PARISH_CENTER));
+  assert.ok(hydrated.nodes.filter((node) => node.flags?.has(MAP_FLAG_PARISH_CENTER)).every((node) => node.parishCenterBaseType === NODE_TYPE_LAND));
+}
+
+function validateParishCenterPrefersLandNodes() {
+  const settings = new Settings("parish-center-land");
+  const map = createLandCellStrip(1);
+  const coastCandidate = map.nodes.find((node) => node.id === "bottom-0");
+  coastCandidate.type = NODE_TYPE_COAST;
+
+  computeParishesStep({
+    ...settings,
+    rng: settings.createStepRng(PARISHES_STEP_TITLE),
+  }, map);
+
+  assert.equal(coastCandidate.flags?.has(MAP_FLAG_PARISH_CENTER), false);
+  const center = map.nodes.find((node) => node.flags?.has(MAP_FLAG_PARISH_CENTER));
+  assert.ok(center);
+  assert.equal(center.type, NODE_TYPE_PARISH_CENTER);
+  assert.equal(center.parishCenterBaseType, NODE_TYPE_LAND);
+}
+
+function validateParishCenterFallsBackWhenNoLandNodeExists() {
+  const settings = new Settings("parish-center-coast");
+  const map = createLandCellStrip(1);
+  for (const node of map.nodes) node.type = NODE_TYPE_COAST;
+
+  computeParishesStep({
+    ...settings,
+    rng: settings.createStepRng(PARISHES_STEP_TITLE),
+  }, map);
+
+  const center = map.nodes.find((node) => node.flags?.has(MAP_FLAG_PARISH_CENTER));
+  assert.ok(center);
+  assert.equal(center.type, NODE_TYPE_PARISH_CENTER);
+  assert.equal(center.parishCenterBaseType, NODE_TYPE_COAST);
+}
+
+function validateParishSizeSettingControlsParishCount() {
+  const settings = new Settings("parish-size");
+  settings.parishes.parishSize = 4;
+  const map = createLandCellStrip(9);
+  const result = computeParishes({
+    ...settings,
+    rng: settings.createStepRng(PARISHES_STEP_TITLE),
+  }, map);
+
+  assert.equal(result.parishSize, 4);
+  assert.equal(result.parishCount, 3);
+}
+
+function validateParishSettingsSerialization() {
+  const settings = new Settings("parish-serialization");
+  settings.parishes.parishSize = 7;
+  const hydrated = hydrateSettings(plainSettings(settings));
+
+  assert.equal(hydrated.parishes.parishSize, 7);
+}
+
+function hasKeyValueTag(flags, key, value) {
+  return [...(flags ?? [])].some((flag) => (
+    flag && typeof flag === "object" && flag.key === key && flag.value === value
+  ));
+}
+
+function validateParishesReplayFramesAndOverlay() {
+  const settings = new Settings("parish-replay");
+  const map = createLandCellStrip(settings.parishes.parishSize + 1);
+  const replay = createParishesReplay({
+    ...settings,
+    rng: settings.createStepRng(PARISHES_STEP_TITLE),
+  }, map);
+
+  assert.equal(replay.frames[0].label, "Before parishes");
+  assert.equal(replay.frames.at(-1).label, "Parishes complete");
+  assert.ok(replay.frames.length >= 3);
+  assert.ok(replay.frames.every((frame) => frame.overlay?.type === OVERLAY_TYPE_PARISHES));
+  assert.ok(replay.frames.slice(1, -1).every((frame) => frame.label.startsWith("K-means pass ")));
+  assert.equal(
+    replay.frames.at(-1).overlay.areas.reduce((sum, area) => sum + area.cellIds.length, 0),
+    settings.parishes.parishSize + 1
+  );
+  assert.ok(replay.frames.at(-1).overlay.areas.every((area) => area.color && area.d && area.cellIds.length > 0));
+
+  const hydrated = hydrateReplay(serializeReplay(replay));
+  const {calls, svg} = createSvgProbe();
+  hydrated.frames.at(-1).map.drawOverlay(svg);
+  assert.ok(calls.some((call) => call.layerId === "overlay" && call.name === "path"));
+  const path = calls.find((call) => call.layerId === "overlay" && call.name === "path");
+  assert.ok(path.attrs.fill);
+  assert.equal(path.attrs["fill-opacity"], "0.1");
+  assert.equal(path.attrs["stroke-opacity"], "0.25");
+  assert.equal(path.attrs["stroke-width"], "42");
+  assert.ok(path.attrs["clip-path"].startsWith("url(#parish-clip-"));
+  assert.ok(
+    hydrated.frames.at(-1).map.cells.every((cell) => (
+      [...(cell.flags ?? [])].some((flag) => flag?.key === MAP_TAG_PARISH)
+    ))
+  );
+  assert.ok(hydrated.frames.at(-1).map.nodes.some((node) => node.flags?.has(MAP_FLAG_PARISH_CENTER)));
 }
 
 function validateCellDrawing() {
@@ -2963,7 +3260,8 @@ validateMapClearClearsOverlay();
 validateHoverIndexBuildsCellNeighborsAndArea();
 validateHoverIndexBuildsConnectedEdgesAndNodes();
 validateHoverIndexBuildsConnectedCellsAndNeighboringNodesForNode();
-validateParishesRegisteredAsFinalNoOpStep();
+validateHoverIndexFormatsKeyValueTags();
+validateParishesRegisteredAsFinalStepWithReplay();
 validateParishesStepUsesGlobalSettingsOnly();
 validateWeightedGraphFiltersAndWeightsParishEdges();
 validateDijkstraPrefersLowerWeightedRoute();
@@ -2972,6 +3270,16 @@ validateReconstructedPathPreservesCanonicalReferences();
 validateSelectableParishStartRequiresLandEdge();
 validateParishStartChangeRecomputesShortestPathTree();
 validateParishPreviewReconstructsOrderedEdgeChain();
+validateParishPreviewDescriptionIncludesLengthAndCost();
+validateParishLandMassesDoNotCrossCrossingEdges();
+validateParishDistanceGraphUsesTemporaryCentroidsAndWeightedCoast();
+validateParishCountUsesConfiguredParishSize();
+validateParishStepTagsCellsAndCenterNodes();
+validateParishCenterPrefersLandNodes();
+validateParishCenterFallsBackWhenNoLandNodeExists();
+validateParishSizeSettingControlsParishCount();
+validateParishSettingsSerialization();
+validateParishesReplayFramesAndOverlay();
 validateCellDrawing();
 validateAreaBoundaryPathSeparatesCornerTouchingCells();
 validateAreaBoundaryPathMergesEdgeConnectedCells();

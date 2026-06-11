@@ -53,6 +53,9 @@ export function Settings(seed="Hello world!") {
       primaryWidth: 24,
       tributaryWidth: 16,
     },
+    parishes: {
+      parishSize: 50,
+    },
   }
 }
 
@@ -127,6 +130,20 @@ export const SETTING_GROUPS = [
         min: 0,
         step: 5,
         help: "Removes and merges graph edges shorter than this length.",
+      },
+    ],
+  },
+  {
+    title: "Parishes",
+    settings: [
+      {
+        path: "parishes.parishSize",
+        label: "Parish size",
+        ownerStep: "Parishes",
+        type: "number",
+        min: 1,
+        step: 1,
+        help: "Sets the target number of land cells per parish. Each land mass gets ceil(cell count / parish size) parishes, with a minimum of one.",
       },
     ],
   },

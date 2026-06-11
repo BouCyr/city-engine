@@ -1,4 +1,4 @@
-import {EDGE_TYPE_CROSSING, EDGE_TYPE_LAND} from "../constants.mjs";
+import {EDGE_TYPE_LAND} from "../constants.mjs";
 import {
   buildWeightedNodeGraph,
   computeShortestPathTree,
@@ -7,7 +7,6 @@ import {
 
 export const PARISHES_STEP_TITLE = "Parishes";
 export const PARISH_LAND_WEIGHT_FACTOR = 12;
-export const PARISH_CROSSING_WEIGHT_FACTOR = 60;
 
 export function createParishInteractionState() {
   return {
@@ -69,11 +68,8 @@ export function clearParishSelection(state) {
 
 export function buildParishPathGraph(map) {
   return buildWeightedNodeGraph(map, {
-    edgeFilter: (edge) => edge?.type === EDGE_TYPE_LAND || edge?.type === EDGE_TYPE_CROSSING,
-    edgeWeight: ({edge, length}) => {
-      if (edge?.type === EDGE_TYPE_CROSSING) return PARISH_CROSSING_WEIGHT_FACTOR * length;
-      return PARISH_LAND_WEIGHT_FACTOR * length;
-    },
+    edgeFilter: (edge) => edge?.type === EDGE_TYPE_LAND,
+    edgeWeight: ({length}) => PARISH_LAND_WEIGHT_FACTOR * length,
   });
 }
 
@@ -85,4 +81,23 @@ export function getParishPreviewPath(state) {
   if (!state.startNodeId || !state.shortestPathTree || !state.previewTargetNodeId) return null;
   if (state.previewTargetNodeId === state.startNodeId) return null;
   return reconstructShortestPath(state.shortestPathTree, state.previewTargetNodeId);
+}
+
+export function describeParishPreviewPath(state) {
+  const path = getParishPreviewPath(state);
+  if (!path) return null;
+
+  return {
+    path,
+    details: {
+      startNodeId: path.nodes.at(0)?.id ?? null,
+      targetNodeId: path.nodes.at(-1)?.id ?? null,
+      nodeCount: path.nodes.length,
+      edgeCount: path.edges.length,
+      totalLength: path.totalLength,
+      totalCost: path.totalWeight,
+      nodeIds: path.nodes.map((node) => node.id),
+      edgeIds: path.edges.map((edge) => edge.id),
+    },
+  };
 }

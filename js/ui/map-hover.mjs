@@ -217,8 +217,21 @@ function edgeLength(edge) {
 function sortedStrings(values) {
   return [...(values ?? [])]
     .filter((value) => value !== undefined && value !== null)
-    .map((value) => String(value))
+    .map(formatTag)
     .sort((left, right) => left.localeCompare(right));
+}
+
+function formatTag(value) {
+  if (value && typeof value === "object") {
+    if ("key" in value && "value" in value) return `${value.key}=${value.value}`;
+    if ("key" in value) return String(value.key);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
 }
 
 function sortedEntityIds(values) {

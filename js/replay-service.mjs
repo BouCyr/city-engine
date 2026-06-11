@@ -14,7 +14,9 @@ import {
   OVERLAY_TYPE_COAST_CENTROIDS,
   OVERLAY_TYPE_COAST_FIELD,
   OVERLAY_TYPE_GATHER,
+  OVERLAY_TYPE_PARISHES,
   OVERLAY_TYPE_RIVERS,
+  NODE_TYPE_PARISH_CENTER,
   RIVER_ROLE_PRIMARY,
   TERRAIN_CLASS_LAND,
   TERRAIN_CLASS_RIVER,
@@ -37,6 +39,7 @@ export function plainSettings(settings) {
     rivers: {...settings.rivers},
     tributaries: {...settings.tributaries},
     riverCells: {...settings.riverCells},
+    parishes: {...settings.parishes},
   };
 }
 
@@ -50,6 +53,7 @@ export function hydrateSettings(data) {
   settings.rivers = {...settings.rivers, ...(data?.rivers ?? {})};
   settings.tributaries = {...settings.tributaries, ...(data?.tributaries ?? {})};
   settings.riverCells = {...settings.riverCells, ...(data?.riverCells ?? {})};
+  settings.parishes = {...settings.parishes, ...(data?.parishes ?? {})};
   return settings;
 }
 
@@ -103,6 +107,7 @@ export function serializeMap(map) {
       y: node.y,
       type: node.type,
       flags: Array.from(node.flags ?? []),
+      parishCenterBaseType: node.parishCenterBaseType ?? null,
       draw: node.draw !== null,
     })),
     edges: map.edges.map((edge) => ({
@@ -122,6 +127,10 @@ export function serializeMap(map) {
       type: cell.type,
       edgeIds: (cell.edges ?? []).map((edge) => edge.id),
       flags: Array.from(cell.flags ?? []),
+      landMassId: cell.landMassId ?? null,
+      landMassIndex: cell.landMassIndex ?? null,
+      parishId: cell.parishId ?? null,
+      parishIndex: cell.parishIndex ?? null,
       fill: cell.fill ?? null,
       draw: cell.draw !== null,
     })),
@@ -170,6 +179,7 @@ export function hydrateMap(data) {
       y: nodeData.y,
       type: nodeData.type,
       flags: new Set(nodeData.flags ?? []),
+      parishCenterBaseType: nodeData.parishCenterBaseType ?? undefined,
       edges: new Set(),
       draw: nodeData.draw ? drawPoint : null,
     };
@@ -204,6 +214,10 @@ export function hydrateMap(data) {
       type: cellData.type,
       edges: (cellData.edgeIds ?? []).map((id) => edgeById.get(id)).filter(Boolean),
       flags: new Set(cellData.flags ?? []),
+      landMassId: cellData.landMassId ?? undefined,
+      landMassIndex: cellData.landMassIndex ?? undefined,
+      parishId: cellData.parishId ?? undefined,
+      parishIndex: cellData.parishIndex ?? undefined,
       fill: cellData.fill,
       draw: cellData.draw ? drawForCell(cellData.type) : null,
     };
@@ -277,18 +291,23 @@ export function hydrateOverlayDraw(overlay) {
     return createRiversOverlayDraw(overlay);
   }
 
+  if (overlay.type === OVERLAY_TYPE_PARISHES) {
+    return createParishesOverlayDraw(overlay);
+  }
+
   return null;
 }
 
 function drawPoint(svg) {
   const layer = svg.getElementById("nodes");
   const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  const parishCenter = this.type === NODE_TYPE_PARISH_CENTER;
   circle.setAttribute("cx", this.x);
   circle.setAttribute("cy", this.y);
-  circle.setAttribute("r", "5");
-  circle.setAttribute("fill", "#BBB");
-  circle.setAttribute("stroke", "#CCC");
-  circle.setAttribute("strokeWidth", "2");
+  circle.setAttribute("r", parishCenter ? "11" : "5");
+  circle.setAttribute("fill", parishCenter ? "var(--land-edge)" : "#BBB");
+  circle.setAttribute("stroke", parishCenter ? "var(--bg-color)" : "#CCC");
+  circle.setAttribute("strokeWidth", parishCenter ? "3" : "2");
   layer.appendChild(circle);
 }
 
@@ -488,6 +507,66 @@ function createRiversOverlayDraw({polygons = [], arrows = [], lines = [], paths 
       layer.appendChild(element);
     }
   };
+}
+
+function createParishesOverlayDraw({areas = [], centroids = []}) {
+  return function drawParishesOverlay(svg) {
+    const layer = svg.getElementById("overlay");
+    if (!layer) return;
+
+    for (const area of areas) {
+      appendParishBorder(svg, layer, area);
+    }
+
+    for (const centroid of centroids) {
+      const element = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      element.setAttribute("cx", centroid.x);
+      element.setAttribute("cy", centroid.y);
+      element.setAttribute("r", "9");
+      element.setAttribute("fill", centroid.color);
+      element.setAttribute("stroke", "#111");
+      element.setAttribute("stroke-width", "2");
+      layer.appendChild(element);
+    }
+  };
+}
+
+function appendParishBorder(svg, layer, area) {
+  const clipId = `parish-clip-${cssSafeId(area.parishId)}`;
+  const defs = ensureSvgDefs(svg);
+  const clipPath = document.createElementNS("http://www.w3.org/2000/svg", "clipPath");
+  const clipShape = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+
+  clipPath.setAttribute("id", clipId);
+  clipShape.setAttribute("d", area.d);
+  clipPath.appendChild(clipShape);
+  defs.querySelector?.(`#${clipId}`)?.remove?.();
+  defs.appendChild(clipPath);
+
+  path.setAttribute("d", area.d);
+  path.setAttribute("fill", area.color);
+  path.setAttribute("fill-opacity", "0.1");
+  path.setAttribute("stroke", area.color);
+  path.setAttribute("stroke-opacity", "0.25");
+  path.setAttribute("stroke-width", "42");
+  path.setAttribute("stroke-linejoin", "round");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("clip-path", `url(#${clipId})`);
+  layer.appendChild(path);
+}
+
+function ensureSvgDefs(svg) {
+  let defs = svg.querySelector?.("defs");
+  if (!defs) {
+    defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    svg.insertBefore?.(defs, svg.firstChild ?? null);
+  }
+  return defs;
+}
+
+function cssSafeId(value) {
+  return String(value).replace(/[^A-Za-z0-9_-]/g, "-");
 }
 
 function appendRiverArrow(layer, arrow) {
