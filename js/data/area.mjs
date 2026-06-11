@@ -1,3 +1,4 @@
+import polygonClipping from "polygon-clipping";
 import {TERRAIN_CLASS_LAND, TERRAIN_CLASS_RIVER, TERRAIN_CLASS_SEA, TERRAIN_LAND, TERRAIN_RIVER, TERRAIN_SEA} from "../constants.mjs";
 import {orderedCellPoints} from "./cell.mjs";
 
@@ -37,69 +38,53 @@ export function drawArea(svg, groupElement = null) {
 }
 
 export function areaBoundaryPath(cells) {
-  const cellSet = new Set(cells);
-  const segments = [];
+  const polygons = (cells ?? [])
+    .map(cellRing)
+    .filter((ring) => ring.length >= 3)
+    .map((ring) => [ring]);
 
-  for (const cell of cells) {
-    for (const edge of cell.edges || []) {
-      if (!edge) continue;
+  if (polygons.length === 0) return "";
 
-      const other = edge.leftCell === cell
-        ? edge.rightCell
-        : edge.rightCell === cell
-          ? edge.leftCell
-          : null;
+  const geometry = polygons.length === 1
+    ? polygons
+    : polygonClipping.union(...polygons);
 
-      if (other && cellSet.has(other)) continue;
-
-      segments.push({
-        start: edge.start,
-        end: edge.end,
-      });
-    }
-  }
-
-  return segmentsToPath(segments);
+  return geometryToPath(geometry);
 }
 
-function segmentsToPath(segments) {
-  const remaining = segments.map((segment) => ({
-    start: pointKey(segment.start),
-    end: pointKey(segment.end),
-    startPoint: segment.start,
-    endPoint: segment.end,
-  }));
-  const loops = [];
+function cellRing(cell) {
+  return cleanupRing((orderedCellPoints(cell) ?? []).map((point) => [point.x, point.y]));
+}
 
-  while (remaining.length > 0) {
-    const first = remaining.pop();
-    const loop = [first.startPoint, first.endPoint];
-    let currentKey = first.end;
-    const targetKey = first.start;
+function geometryToPath(geometry) {
+  const paths = [];
 
-    while (currentKey !== targetKey && remaining.length > 0) {
-      const nextIndex = remaining.findIndex((segment) => segment.start === currentKey || segment.end === currentKey);
-      if (nextIndex < 0) break;
-
-      const [next] = remaining.splice(nextIndex, 1);
-      if (next.start === currentKey) {
-        loop.push(next.endPoint);
-        currentKey = next.end;
-      } else {
-        loop.push(next.startPoint);
-        currentKey = next.start;
-      }
-    }
-
-    if (loop.length >= 3) {
-      loops.push(loop);
+  for (const polygon of geometry ?? []) {
+    for (const ring of polygon ?? []) {
+      const cleaned = cleanupRing(ring);
+      if (cleaned.length < 3) continue;
+      paths.push(`M ${cleaned.map(([x, y]) => `${x} ${y}`).join(" L ")} Z`);
     }
   }
 
-  if (loops.length === 0) return "";
-  return loops.map((loop) => (
-    `M ${loop.map((point) => `${point.x} ${point.y}`).join(" L ")} Z`
-  )).join(" ");
+  return paths.join(" ");
+}
+
+function cleanupRing(ring) {
+  const unique = [];
+
+  for (const point of ring ?? []) {
+    if (!point) continue;
+    if (unique.length === 0 || !samePair(unique[unique.length - 1], point)) {
+      unique.push([point[0], point[1]]);
+    }
+  }
+
+  if (unique.length > 1 && samePair(unique[0], unique[unique.length - 1])) {
+    unique.pop();
+  }
+
+  return unique;
 }
 
 function terrainClass(type) {
@@ -114,6 +99,6 @@ function areaInnerBorderFilterId(type) {
   return null;
 }
 
-function pointKey(point) {
-  return `${Math.round(point.x * 1000000)},${Math.round(point.y * 1000000)}`;
+function samePair(a, b) {
+  return Math.abs(a[0] - b[0]) <= 1e-9 && Math.abs(a[1] - b[1]) <= 1e-9;
 }

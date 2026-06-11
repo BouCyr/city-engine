@@ -82,7 +82,7 @@
 }
 
 .edge.terrain-crossing {
-  stroke: var(--land-edge);
+  stroke: var(--crossing-edge);
 }
 
 .gather-overlay-polygon {

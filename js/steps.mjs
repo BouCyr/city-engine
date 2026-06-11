@@ -161,7 +161,7 @@ export const steps = [
     ],
     explanation: (settings, stepResult) => [
       `River corridor topology reads the ordered primary river cells selected by the river search, smooths their centroid path geometrically, offsets it into a corridor polygon, and applies polygon boolean operations to carve land cells.`,
-      `No centerline river edges or crossing nodes are created. Banks and mouths are ordinary shared edges between <em>LAND</em>, <em>SEA</em>, and <em>RIVER</em> cells.`,
+      `Where the carved corridor bisects an original land edge, the step restores a <em>CROSSING</em> edge through the river and marks its endpoints as <em>CROSSING_END</em> nodes.`,
     ],
     renderExplanationExtras: null,
   }

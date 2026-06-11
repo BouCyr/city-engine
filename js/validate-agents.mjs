@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {areaBoundaryPath} from "./data/area.mjs";
 import {cloneDeepKeepFunctions} from "./data/clone.mjs";
 import {Cell, orderedCellPoints} from "./data/cell.mjs";
 import {Edge} from "./data/edge.mjs";
@@ -32,10 +33,12 @@ import {
   MAP_FLAG_COAST_GAP,
   MAP_FLAG_FIXED,
   MAP_FLAG_RIVER,
+  NODE_FLAG_CROSSING,
   MAP_FLAG_TEST,
   MAP_FLAG_TEST_GATE,
   MAP_FLAG_TEST_PRIMARY,
   NODE_TYPE_CROSSING,
+  NODE_TYPE_CROSSING_END,
   NODE_TYPE_RIVER,
   NODE_TYPE_RIVER_JUNCTION,
   NODE_TYPE_TEST_FIXTURE,
@@ -145,6 +148,20 @@ function buildMapWithEdge() {
   map.nodes.push(first, second);
   map.edges.push(Edge("edge", first, second, EDGE_TYPE_TEST_ROAD, null, [MAP_FLAG_TEST_PRIMARY]));
   return map;
+}
+
+function createRectCellFixture(id, x1, y1, x2, y2) {
+  const topLeft = Node(`${id}-tl`, x1, y1, NODE_TYPE_TEST_FIXTURE);
+  const topRight = Node(`${id}-tr`, x2, y1, NODE_TYPE_TEST_FIXTURE);
+  const bottomRight = Node(`${id}-br`, x2, y2, NODE_TYPE_TEST_FIXTURE);
+  const bottomLeft = Node(`${id}-bl`, x1, y2, NODE_TYPE_TEST_FIXTURE);
+  const edges = [
+    Edge(`${id}-top`, topLeft, topRight, EDGE_TYPE_TEST_FIXTURE),
+    Edge(`${id}-right`, topRight, bottomRight, EDGE_TYPE_TEST_FIXTURE),
+    Edge(`${id}-bottom`, bottomRight, bottomLeft, EDGE_TYPE_TEST_FIXTURE),
+    Edge(`${id}-left`, bottomLeft, topLeft, EDGE_TYPE_TEST_FIXTURE),
+  ];
+  return Cell(id, edges);
 }
 
 function validateCloneIdentityAndFlags() {
@@ -466,6 +483,25 @@ function validateCellDrawing() {
   assert.equal(calls[0].name, "polygon");
   assert.ok(calls[0].attrs.points.length > 0);
   assert.equal(calls[0].attrs.class, "cell");
+}
+
+function validateAreaBoundaryPathSeparatesCornerTouchingCells() {
+  const first = createRectCellFixture("corner-a", 0, 0, 10, 10);
+  const second = createRectCellFixture("corner-b", 10, 10, 20, 20);
+
+  const path = areaBoundaryPath([first, second]);
+
+  assert.equal((path.match(/\bM\b/g) ?? []).length, 2);
+}
+
+function validateAreaBoundaryPathMergesEdgeConnectedCells() {
+  const first = createRectCellFixture("edge-a", 0, 0, 10, 10);
+  const second = createRectCellFixture("edge-b", 10, 0, 20, 10);
+  const third = createRectCellFixture("edge-c", 10, 10, 20, 20);
+
+  const path = areaBoundaryPath([first, second, third]);
+
+  assert.equal((path.match(/\bM\b/g) ?? []).length, 1);
 }
 
 function validateLloydRelaxation() {
@@ -1939,8 +1975,13 @@ function validateRiverCorridorTopologyCarvesLandCells() {
   const riverCells = result.cells.filter((cell) => cell.type === TERRAIN_RIVER);
   const river = result.rivers[0];
   const tributary = result.rivers[1];
+  const crossingNodes = result.nodes.filter((node) => node.flags?.has(NODE_FLAG_CROSSING));
+  const crossingEnds = result.nodes.filter((node) => node.type === NODE_TYPE_CROSSING_END);
+  const crossingEdges = result.edges.filter((edge) => edge.type === EDGE_TYPE_CROSSING);
 
-  assert.equal(result.nodes.some((node) => node.type === NODE_TYPE_CROSSING), false);
+  assert.ok(crossingNodes.length >= 2);
+  assert.ok(crossingEnds.length >= 2);
+  assert.ok(crossingEnds.every((node) => node.flags.has(NODE_FLAG_CROSSING)));
   assert.equal(river.topologyEdges.length, 0);
   assert.equal(tributary.topologyEdges.length, 0);
   assert.ok(river.riverCells.length >= 1);
@@ -1960,8 +2001,10 @@ function validateRiverCorridorTopologyCarvesLandCells() {
   assert.ok(result.cells.filter((cell) => cell.type === TERRAIN_LAND).length >= inputLandCells);
   assert.ok(result.edges.some((edge) => edge.type === EDGE_TYPE_BANK));
   assert.ok(result.edges.some((edge) => edge.type === EDGE_TYPE_MOUTH));
-  assert.equal(result.edges.some((edge) => edge.type === EDGE_TYPE_CROSSING), false);
-  assert.equal(result.edges.some((edge) => edge.start.type === NODE_TYPE_CROSSING || edge.end.type === NODE_TYPE_CROSSING), false);
+  assert.ok(crossingEdges.length >= 1);
+  assert.ok(crossingEdges.every((edge) => edge.start.type === NODE_TYPE_CROSSING_END && edge.end.type === NODE_TYPE_CROSSING_END));
+  assert.ok(crossingEdges.every((edge) => edge.leftCell?.type === TERRAIN_RIVER && edge.rightCell?.type === TERRAIN_RIVER));
+  assert.ok(result.cells.some((cell) => cell.type === TERRAIN_RIVER && cell.sourceCellId));
   assert.equal(result.edges.some((edge) => String(edge.id).startsWith("river-carve-edge-")), false);
   assert.ok(result.areas[0].areas.some((area) => area.type === TERRAIN_RIVER));
   assert.ok(result.areas[0].areas.filter((area) => area.type === TERRAIN_LAND).every((area) => !area.holes));
@@ -2690,6 +2733,8 @@ validateGatherVoronoi();
 validateGatherReplay();
 validateMapClearClearsOverlay();
 validateCellDrawing();
+validateAreaBoundaryPathSeparatesCornerTouchingCells();
+validateAreaBoundaryPathMergesEdgeConnectedCells();
 validateLloydRelaxation();
 validatePruneRemovesAndRewires();
 validatePruneCellDeletion();

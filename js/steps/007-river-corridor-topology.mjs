@@ -10,13 +10,16 @@ import {
   AREA_KIND_OPEN_SEA,
   EDGE_TYPE_BANK,
   EDGE_TYPE_COAST,
+  EDGE_TYPE_CROSSING,
   EDGE_TYPE_LAND,
   EDGE_TYPE_MOUTH,
   EDGE_TYPE_RIVER,
   EDGE_TYPE_SEA,
   MAP_FLAG_BOUNDARY,
   NODE_TYPE_COAST,
+  NODE_TYPE_CROSSING_END,
   NODE_TYPE_LAND,
+  NODE_FLAG_CROSSING,
   NODE_TYPE_RIVER,
   NODE_TYPE_SEA,
   RIVER_ROLE_PRIMARY,
@@ -68,7 +71,6 @@ export function computeRiverCorridorTopology(settings, map) {
   checkDeadline(settings, "buildCorridor");
 
   const fragments = [];
-  const riverParts = [];
   const cellReplacement = new globalThis.Map();
 
   for (const cell of map.cells) {
@@ -98,7 +100,13 @@ export function computeRiverCorridorTopology(settings, map) {
 
     if (geometryPolygonCount(riverGeometry) > 0) {
       metrics.carvedLandCells += 1;
-      riverParts.push(riverGeometry);
+      const riverFragments = fragmentsFromGeometry(riverGeometry, cell, `${cell.id}-river`, TERRAIN_RIVER)
+        .map((fragment) => ({
+          ...fragment,
+          pointMetadata: buildCrossingPointMetadata(fragment.ring, cell.edges),
+        }));
+      metrics.riverCellsCreated += riverFragments.length;
+      fragments.push(...riverFragments);
     }
 
     const landFragments = fragmentsFromGeometry(remainderGeometry, cell, cell.id, TERRAIN_LAND);
@@ -106,19 +114,11 @@ export function computeRiverCorridorTopology(settings, map) {
     cellReplacement.set(cell, landFragments.map((fragment) => fragment.id));
   }
 
-  const riverGeometry = riverParts.length > 0
-    ? cleanGeometry(polygonClipping.union(...riverParts))
-    : [];
-  const riverFragments = fragmentsFromGeometry(riverGeometry, null, `river-corridor-cell`, TERRAIN_RIVER)
-    .map((fragment) => ({
-      ...fragment,
-    }));
-  metrics.riverCellsCreated = riverFragments.length;
-  fragments.push(...riverFragments);
-
   const densifiedFragments = densifyFragments(settings, fragments, metrics);
   rebuildGraphFromFragments(settings, map, densifiedFragments, metrics);
   applyRiverReferences(map, corridors, cellReplacement);
+  restoreRiverCrossings(map);
+  normalizeGraphAfterCrossings(map);
   classifyEdgesAndNodes(map);
   rebuildTerrainAreas(map);
 
@@ -373,15 +373,18 @@ function densifyFragments(settings, fragments, metrics) {
 
   return fragments.map((fragment) => {
     checkDeadline(settings, "densifyFragments");
+    const densified = densifyRing(fragment.ring, uniquePoints, fragment.pointMetadata);
     return {
       ...fragment,
-      ring: removeDuplicatePairs(densifyRing(fragment.ring, uniquePoints)),
+      ring: removeDuplicatePairs(densified.ring),
+      pointMetadata: densified.pointMetadata,
     };
   });
 }
 
-function densifyRing(ring, points) {
+function densifyRing(ring, points, pointMetadata = new globalThis.Map()) {
   const result = [];
+  const metadata = new globalThis.Map(pointMetadata ?? []);
   for (let index = 0; index < ring.length; index += 1) {
     const start = ring[index];
     const end = ring[(index + 1) % ring.length];
@@ -389,14 +392,21 @@ function densifyRing(ring, points) {
     const segmentPoints = points
       .filter((point) => !samePair(point, start) && !samePair(point, end) && pairOnSegment(point, start, end))
       .sort((a, b) => pairDistance(start, a) - pairDistance(start, b));
+    const propagated = crossingMetadataForSegment(start, end, metadata);
+    if (propagated) {
+      for (const point of segmentPoints) {
+        metadata.set(pairKey(point), cloneCrossingMetadata(propagated));
+      }
+    }
     result.push(...segmentPoints);
   }
-  return result;
+  return {ring: result, pointMetadata: metadata};
 }
 
 function rebuildGraphFromFragments(settings, map, fragments, metrics) {
   const nodeByPoint = new globalThis.Map();
   const edgeByKey = new globalThis.Map();
+  const pointMetadata = collectPointMetadata(fragments);
   map.nodes = [];
   map.edges = [];
   map.cells = [];
@@ -409,8 +419,8 @@ function rebuildGraphFromFragments(settings, map, fragments, metrics) {
     if (fragment.riverId) cell.riverId = fragment.riverId;
 
     for (let index = 0; index < fragment.ring.length; index += 1) {
-      const start = getOrCreateNode(map, nodeByPoint, fragment.ring[index]);
-      const end = getOrCreateNode(map, nodeByPoint, fragment.ring[(index + 1) % fragment.ring.length]);
+      const start = getOrCreateNode(map, nodeByPoint, fragment.ring[index], pointMetadata.get(pairKey(fragment.ring[index])));
+      const end = getOrCreateNode(map, nodeByPoint, fragment.ring[(index + 1) % fragment.ring.length], pointMetadata.get(pairKey(fragment.ring[(index + 1) % fragment.ring.length])));
       if (start === end) continue;
       const edge = getOrCreateEdge(map, edgeByKey, start, end);
       assignEdgeCell(edge, cell);
@@ -421,12 +431,16 @@ function rebuildGraphFromFragments(settings, map, fragments, metrics) {
   }
 }
 
-function getOrCreateNode(map, nodeByPoint, pair) {
+function getOrCreateNode(map, nodeByPoint, pair, metadata = null) {
   const key = pairKey(pair);
   let node = nodeByPoint.get(key);
-  if (node) return node;
+  if (node) {
+    applyCrossingMetadata(node, metadata);
+    return node;
+  }
   node = Node(`river-corridor-node-${nodeByPoint.size}`, pair[0], pair[1], NODE_TYPE_LAND);
   node.draw = null;
+  applyCrossingMetadata(node, metadata);
   nodeByPoint.set(key, node);
   map.nodes.push(node);
   return node;
@@ -470,6 +484,184 @@ function applyRiverReferences(map, corridors, cellReplacement) {
   }
 }
 
+function restoreRiverCrossings(map) {
+  const replacements = new globalThis.Map();
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+    const riverCells = [...map.cells]
+      .filter((cell) => cell.type === TERRAIN_RIVER)
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+    for (const cell of riverCells) {
+      const crossingGroup = firstCrossingGroupForCell(cell);
+      if (!crossingGroup) continue;
+      const children = splitRiverCellByCrossing(map, cell, crossingGroup);
+      if (children.length === 0) continue;
+      replacements.set(cell, children);
+      map.cells = map.cells.filter((candidate) => candidate !== cell);
+      map.cells.push(...children);
+      changed = true;
+      break;
+    }
+  }
+
+  if (replacements.size > 0) {
+    updateRiverReferencesForCrossings(map, replacements);
+  }
+}
+
+function firstCrossingGroupForCell(cell) {
+  const nodes = orderedUniqueCellNodes(cell);
+  const groups = new globalThis.Map();
+
+  for (const node of nodes) {
+    const sourceEdgeIds = [...ensureSet(node.crossingSourceEdgeIds)].sort((a, b) => String(a).localeCompare(String(b)));
+    for (const sourceEdgeId of sourceEdgeIds) {
+      if (!groups.has(sourceEdgeId)) groups.set(sourceEdgeId, []);
+      groups.get(sourceEdgeId).push(node);
+    }
+  }
+
+  for (const sourceEdgeId of [...groups.keys()].sort((a, b) => String(a).localeCompare(String(b)))) {
+    const uniqueGroupNodes = uniqueNodes(groups.get(sourceEdgeId));
+    if (uniqueGroupNodes.length !== 2) continue;
+    const [start, end] = uniqueGroupNodes;
+    if (start === end || crossingEdgeBetween(start, end)) continue;
+    return {sourceEdgeId, nodes: uniqueGroupNodes};
+  }
+
+  return null;
+}
+
+function splitRiverCellByCrossing(map, cell, crossingGroup) {
+  const nodes = orderedUniqueCellNodes(cell);
+  const [startNode, endNode] = crossingGroup.nodes;
+  const firstIndex = nodes.indexOf(startNode);
+  const secondIndex = nodes.indexOf(endNode);
+  if (firstIndex < 0 || secondIndex < 0 || firstIndex === secondIndex) return [];
+
+  startNode.type = NODE_TYPE_CROSSING_END;
+  startNode.flags.add(NODE_FLAG_CROSSING);
+  endNode.type = NODE_TYPE_CROSSING_END;
+  endNode.flags.add(NODE_FLAG_CROSSING);
+
+  const firstPath = nodesBetween(nodes, firstIndex, secondIndex);
+  const secondPath = nodesBetween(nodes, secondIndex, firstIndex);
+  if (firstPath.length < 3 || secondPath.length < 3) return [];
+  const crossingEdge = createOrGetCrossingEdge(map, startNode, endNode);
+
+  return [
+    createRiverChildCell(map, cell, `${cell.id}-crossing-0`, firstPath, crossingEdge),
+    createRiverChildCell(map, cell, `${cell.id}-crossing-1`, secondPath, crossingEdge),
+  ].filter(Boolean);
+}
+
+function createRiverChildCell(map, originalCell, id, boundaryPath, crossingEdge) {
+  const edges = [];
+  for (let index = 0; index < boundaryPath.length - 1; index += 1) {
+    edges.push(
+      findCellEdgeBetween(originalCell, boundaryPath[index], boundaryPath[index + 1])
+      ?? createOrGetBoundaryEdge(map, boundaryPath[index], boundaryPath[index + 1])
+    );
+  }
+  edges.push(crossingEdge);
+  if (edges.length < 3) return null;
+
+  const child = Cell(id, edges, originalCell.fill, originalCell.draw, [...(originalCell.flags ?? [])]);
+  child.type = TERRAIN_RIVER;
+  child.parentCellId = originalCell.id;
+  child.riverId = originalCell.riverId ?? null;
+  child.flags = new Set([...(originalCell.flags ?? []), TERRAIN_RIVER]);
+
+  for (const edge of edges) {
+    assignEdgeCellReplacement(edge, originalCell, child);
+  }
+  return child;
+}
+
+function createOrGetBoundaryEdge(map, start, end) {
+  const existing = map.edges.find((edge) => edge.type !== EDGE_TYPE_CROSSING && sameEdgeEndpoints(edge, start, end));
+  if (existing) return existing;
+  const edge = Edge(
+    `river-corridor-edge-${map.edges.length}`,
+    start,
+    end,
+    EDGE_TYPE_LAND,
+    drawTerrainEdge,
+    []
+  );
+  map.edges.push(edge);
+  return edge;
+}
+
+function findCellEdgeBetween(cell, start, end) {
+  return (cell.edges ?? []).find((edge) => sameEdgeEndpoints(edge, start, end)) ?? null;
+}
+
+function createOrGetCrossingEdge(map, start, end) {
+  const existing = map.edges.find((edge) => edge.type === EDGE_TYPE_CROSSING && sameEdgeEndpoints(edge, start, end));
+  if (existing) return existing;
+  const edge = Edge(`river-corridor-crossing-${map.edges.length}`, start, end, EDGE_TYPE_CROSSING, drawTerrainEdge, [TERRAIN_RIVER]);
+  map.edges.push(edge);
+  return edge;
+}
+
+function crossingEdgeBetween(start, end) {
+  return [...(start.edges ?? [])].some((edge) => edge.type === EDGE_TYPE_CROSSING && sameEdgeEndpoints(edge, start, end));
+}
+
+function assignEdgeCellReplacement(edge, oldCell, newCell) {
+  if (edge.leftCell === oldCell) edge.leftCell = newCell;
+  else if (edge.rightCell === oldCell) edge.rightCell = newCell;
+  else if (!edge.leftCell) edge.leftCell = newCell;
+  else if (!edge.rightCell && edge.leftCell !== newCell) edge.rightCell = newCell;
+}
+
+function updateRiverReferencesForCrossings(map, replacements) {
+  for (const river of map.rivers ?? []) {
+    river.riverCells = uniqueCellRefs(
+      (river.riverCells ?? []).flatMap((cell) => expandReplacementCells(cell, replacements, map))
+    );
+    river.originalMouth = remapReplacementCell(river.originalMouth, replacements, map);
+    river.exit = remapReplacementCell(river.exit, replacements, map);
+    if (river.mouth?.cell) river.mouth.cell = remapReplacementCell(river.mouth.cell, replacements, map);
+    if (river.mouth?.riverCell) river.mouth.riverCell = remapReplacementCell(river.mouth.riverCell, replacements, map);
+  }
+}
+
+function normalizeGraphAfterCrossings(map) {
+  const validCells = new Set(map.cells);
+
+  for (const edge of map.edges) {
+    if (edge.leftCell && !validCells.has(edge.leftCell)) edge.leftCell = null;
+    if (edge.rightCell && !validCells.has(edge.rightCell)) edge.rightCell = null;
+  }
+
+  map.edges = map.edges.filter((edge) => edge.leftCell || edge.rightCell);
+
+  for (const cell of map.cells) {
+    cell.edges = (cell.edges ?? []).filter((edge) => map.edges.includes(edge) && (edge.leftCell === cell || edge.rightCell === cell));
+  }
+
+  for (const node of map.nodes) {
+    node.edges = new Set([...(node.edges ?? [])].filter((edge) => map.edges.includes(edge)));
+  }
+}
+
+function expandReplacementCells(cell, replacements, map) {
+  if (!cell) return [];
+  if (replacements.has(cell)) {
+    return replacements.get(cell).flatMap((replacement) => expandReplacementCells(replacement, replacements, map));
+  }
+  return map.cells.includes(cell) ? [cell] : [];
+}
+
+function remapReplacementCell(cell, replacements, map) {
+  return expandReplacementCells(cell, replacements, map)[0] ?? null;
+}
+
 function remapCell(map, replacements, cell) {
   if (!cell) return null;
   const ids = replacements.get(cell) ?? [cell.id];
@@ -478,11 +670,17 @@ function remapCell(map, replacements, cell) {
 
 function classifyEdgesAndNodes(map) {
   for (const edge of map.edges) {
+    if (edge.type === EDGE_TYPE_CROSSING) {
+      edge.flags = flagsForEdge(edge.type);
+      edge.draw = drawTerrainEdge;
+      continue;
+    }
     const left = edge.leftCell?.type ?? null;
     const right = edge.rightCell?.type ?? null;
     const types = new Set([left, right].filter(Boolean));
 
-    if (types.has(TERRAIN_RIVER) && types.has(TERRAIN_SEA)) edge.type = EDGE_TYPE_MOUTH;
+    if (isCrossingEdge(edge)) edge.type = EDGE_TYPE_CROSSING;
+    else if (types.has(TERRAIN_RIVER) && types.has(TERRAIN_SEA)) edge.type = EDGE_TYPE_MOUTH;
     else if (types.has(TERRAIN_RIVER) && types.has(TERRAIN_LAND)) edge.type = EDGE_TYPE_BANK;
     else if (left === TERRAIN_RIVER && right === TERRAIN_RIVER) edge.type = EDGE_TYPE_RIVER;
     else if (left === TERRAIN_SEA && right === TERRAIN_SEA) edge.type = EDGE_TYPE_SEA;
@@ -498,6 +696,13 @@ function classifyEdgesAndNodes(map) {
 
   for (const node of map.nodes) {
     const edges = [...(node.edges ?? [])].filter((edge) => map.edges.includes(edge));
+    if (node.type === NODE_TYPE_CROSSING_END || (node.flags?.has?.(NODE_FLAG_CROSSING) && edges.some((edge) => edge.type === EDGE_TYPE_CROSSING))) {
+      node.type = NODE_TYPE_CROSSING_END;
+      node.flags = ensureSet(node.flags);
+      node.flags.add(NODE_FLAG_CROSSING);
+      node.draw = null;
+      continue;
+    }
     if (edges.some((edge) => edge.type === EDGE_TYPE_BANK || edge.type === EDGE_TYPE_MOUTH || edge.type === EDGE_TYPE_RIVER)) {
       node.type = NODE_TYPE_RIVER;
     } else if (edges.some((edge) => edge.type === EDGE_TYPE_COAST)) {
@@ -584,6 +789,7 @@ function drawTerrainEdge(svg) {
 function terrainClassForEdge(type) {
   if (type === EDGE_TYPE_MOUTH) return "mouth";
   if (type === EDGE_TYPE_BANK) return "banks";
+  if (type === EDGE_TYPE_CROSSING) return "crossing";
   if (type === EDGE_TYPE_SEA) return "sea";
   if (type === EDGE_TYPE_COAST) return "coast";
   if (type === EDGE_TYPE_RIVER) return "river";
@@ -594,8 +800,117 @@ function flagsForEdge(type) {
   if (type === EDGE_TYPE_SEA) return new Set([TERRAIN_SEA]);
   if (type === EDGE_TYPE_COAST) return new Set([TERRAIN_COAST]);
   if (type === EDGE_TYPE_LAND) return new Set([TERRAIN_LAND]);
-  if (type === EDGE_TYPE_BANK || type === EDGE_TYPE_MOUTH || type === EDGE_TYPE_RIVER) return new Set([TERRAIN_RIVER]);
+  if (type === EDGE_TYPE_BANK || type === EDGE_TYPE_MOUTH || type === EDGE_TYPE_RIVER || type === EDGE_TYPE_CROSSING) return new Set([TERRAIN_RIVER]);
   return new Set();
+}
+
+function buildCrossingPointMetadata(ring, sourceEdges) {
+  const metadata = new globalThis.Map();
+  for (const point of ring) {
+    const sourceEdgeId = sourceEdgeForInteriorPoint(point, sourceEdges);
+    if (!sourceEdgeId) continue;
+    metadata.set(pairKey(point), {sourceEdgeIds: [sourceEdgeId], crossing: true});
+  }
+  return metadata;
+}
+
+function sourceEdgeForInteriorPoint(point, sourceEdges) {
+  const pair = Array.isArray(point) ? point : toPair(point);
+  const candidates = (sourceEdges ?? [])
+    .filter((edge) => edge.type === EDGE_TYPE_LAND || edge.flags?.has?.(TERRAIN_LAND))
+    .filter((edge) => pairStrictlyInsideEdge(pair, edge));
+  return candidates.length === 1 ? candidates[0].id : null;
+}
+
+function collectPointMetadata(fragments) {
+  const pointMetadata = new globalThis.Map();
+  for (const fragment of fragments) {
+    for (const [key, metadata] of fragment.pointMetadata ?? []) {
+      if (!pointMetadata.has(key)) {
+        pointMetadata.set(key, {sourceEdgeIds: [], crossing: false});
+      }
+      const target = pointMetadata.get(key);
+      target.crossing = target.crossing || Boolean(metadata?.crossing);
+      for (const sourceEdgeId of metadata?.sourceEdgeIds ?? []) {
+        if (!target.sourceEdgeIds.includes(sourceEdgeId)) target.sourceEdgeIds.push(sourceEdgeId);
+      }
+    }
+  }
+  return pointMetadata;
+}
+
+function applyCrossingMetadata(node, metadata) {
+  if (!metadata?.crossing) return;
+  node.flags = ensureSet(node.flags);
+  node.flags.add(NODE_FLAG_CROSSING);
+  node.crossingSourceEdgeIds = ensureSet(node.crossingSourceEdgeIds);
+  for (const sourceEdgeId of metadata.sourceEdgeIds ?? []) node.crossingSourceEdgeIds.add(sourceEdgeId);
+}
+
+function crossingMetadataForSegment(start, end, metadata) {
+  const startMeta = metadata.get(pairKey(start));
+  const endMeta = metadata.get(pairKey(end));
+  if (!startMeta?.crossing || !endMeta?.crossing) return null;
+  const sharedIds = (startMeta.sourceEdgeIds ?? []).filter((id) => (endMeta.sourceEdgeIds ?? []).includes(id));
+  return sharedIds.length > 0 ? {crossing: true, sourceEdgeIds: sharedIds} : null;
+}
+
+function cloneCrossingMetadata(metadata) {
+  return {
+    crossing: Boolean(metadata?.crossing),
+    sourceEdgeIds: [...(metadata?.sourceEdgeIds ?? [])],
+  };
+}
+
+function isCrossingEdge(edge) {
+  if (edge.leftCell?.type !== TERRAIN_RIVER || edge.rightCell?.type !== TERRAIN_RIVER) return false;
+  if (edge.leftCell?.sourceCellId && edge.rightCell?.sourceCellId && edge.leftCell.sourceCellId !== edge.rightCell.sourceCellId) {
+    return true;
+  }
+  return sharedCrossingSourceEdgeIds(edge.start, edge.end).length > 0;
+}
+
+function sharedCrossingSourceEdgeIds(start, end) {
+  const startIds = [...ensureSet(start?.crossingSourceEdgeIds)];
+  const endIds = [...ensureSet(end?.crossingSourceEdgeIds)];
+  return startIds.filter((id) => endIds.includes(id));
+}
+
+function orderedUniqueCellNodes(cell) {
+  const points = orderedCellPoints(cell);
+  return points.filter((point, index) => index === 0 || point !== points[index - 1]);
+}
+
+function nodesBetween(nodes, startIndex, endIndex) {
+  const result = [nodes[startIndex]];
+  let index = startIndex;
+  while (index !== endIndex) {
+    index = (index + 1) % nodes.length;
+    result.push(nodes[index]);
+  }
+  return result;
+}
+
+function uniqueNodes(nodes) {
+  return nodes.filter((node, index) => nodes.indexOf(node) === index);
+}
+
+function uniqueCellRefs(cells) {
+  return cells.filter((cell, index) => cells.indexOf(cell) === index);
+}
+
+function sameEdgeEndpoints(edge, start, end) {
+  return (edge.start === start && edge.end === end) || (edge.start === end && edge.end === start);
+}
+
+function pairStrictlyInsideEdge(point, edge) {
+  const start = toPair(edge.start);
+  const end = toPair(edge.end);
+  return !samePair(point, start) && !samePair(point, end) && pairOnSegment(point, start, end);
+}
+
+function ensureSet(value) {
+  return value instanceof Set ? value : new Set(Array.isArray(value) ? value : []);
 }
 
 function polygonFromRing(ring) {

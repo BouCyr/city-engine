@@ -7,10 +7,12 @@ import {orderedCellPoints} from "./data/cell.mjs";
 import {createDefaultSettings, renderStepSettingsForm} from "./ui/settings-panel.mjs";
 import {
   EDGE_TYPE_COAST,
+  EDGE_TYPE_CROSSING,
   EDGE_TYPE_RIVER,
   EDGE_TYPE_SEA,
   NODE_TYPE_COAST,
   NODE_TYPE_CROSSING,
+  NODE_TYPE_CROSSING_END,
   NODE_TYPE_LAND,
   NODE_TYPE_POI,
   NODE_TYPE_RIVER,
@@ -45,7 +47,6 @@ const MIN_VIEW_RATIO = 0.12;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const DEFAULT_NODE_RADIUS = 6;
 const TERRAIN_NODE_RADIUS = DEFAULT_NODE_RADIUS / 2;
-const CROSSING_NODE_COLOR = "#6f7f3f";
 const ENTITY_METRICS = [
   {label: "Nodes", key: "nodes", layerId: "nodes"},
   {label: "Edges", key: "edges", layerId: "edges"},
@@ -971,7 +972,7 @@ function seedDefaultNodeDisplayTypes(displayMap) {
     if (mapDisplayState.defaultNodeTypes.has(key)) continue;
 
     mapDisplayState.defaultNodeTypes.add(key);
-    if (node.type === NODE_TYPE_CROSSING) {
+    if (node.type === NODE_TYPE_CROSSING || node.type === NODE_TYPE_CROSSING_END) {
       if (!renderedTypeKeys.has(key)) {
         mapDisplayState.debugTypes.add(key);
       }
@@ -1171,11 +1172,12 @@ function colorForType(typeName, layerId) {
     if (typeName === NODE_TYPE_COAST) return "var(--coast-edge)";
     if (typeName === NODE_TYPE_RIVER || typeName === NODE_TYPE_RIVER_JUNCTION) return "var(--sea-edge)";
     if (typeName === NODE_TYPE_LAND) return "var(--land-edge)";
-    if (typeName === NODE_TYPE_CROSSING) return CROSSING_NODE_COLOR;
+    if (typeName === NODE_TYPE_CROSSING || typeName === NODE_TYPE_CROSSING_END) return "var(--land-edge)";
     return "#8b5cf6";
   }
   if (typeName === TERRAIN_SEA || typeName === EDGE_TYPE_SEA || typeName === "terrain-sea") return "var(--sea-fill)";
-  if (typeName === "RIVER" || typeName === EDGE_TYPE_RIVER || typeName === "banks" || typeName === "mouth" || typeName === "crossing" || typeName === "terrain-river" || typeName === "terrain-banks" || typeName === "terrain-mouth" || typeName === "terrain-crossing") return "var(--sea-edge)";
+  if (typeName === EDGE_TYPE_CROSSING || typeName === "crossing" || typeName === "terrain-crossing") return "var(--crossing-edge)";
+  if (typeName === "RIVER" || typeName === EDGE_TYPE_RIVER || typeName === "banks" || typeName === "mouth" || typeName === "terrain-river" || typeName === "terrain-banks" || typeName === "terrain-mouth") return "var(--sea-edge)";
   if (typeName === TERRAIN_LAND || typeName === "terrain-land") return "var(--land-fill)";
   if (typeName === TERRAIN_COAST || typeName === NODE_TYPE_COAST || typeName === EDGE_TYPE_COAST || typeName === "terrain-coast") return "var(--coast-edge)";
   if (layerId === "edges") return "var(--land-edge)";
@@ -1192,7 +1194,8 @@ function isTerrainNodeType(typeName) {
     || typeName === NODE_TYPE_RIVER
     || typeName === NODE_TYPE_RIVER_JUNCTION
     || typeName === NODE_TYPE_LAND
-    || typeName === NODE_TYPE_CROSSING;
+    || typeName === NODE_TYPE_CROSSING
+    || typeName === NODE_TYPE_CROSSING_END;
 }
 
 function colorFromString(value) {

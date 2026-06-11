@@ -16,6 +16,7 @@ export const NODE_TYPE_COAST = "coast";
 export const NODE_TYPE_RIVER = "river";
 export const NODE_TYPE_RIVER_JUNCTION = "river-junction";
 export const NODE_TYPE_CROSSING = "CROSSING";
+export const NODE_TYPE_CROSSING_END = "CROSSING_END";
 
 export const CELL_TYPE_CELL = "Cell";
 export const TERRAIN_SEA = "SEA";
@@ -53,6 +54,7 @@ export const MAP_FLAG_RIVER = "RIVER";
 export const MAP_FLAG_NEEDLE = "NEEDLE";
 export const MAP_FLAG_FIXED = "FIXED";
 export const MAP_FLAG_COAST_GAP = "COAST_GAP";
+export const NODE_FLAG_CROSSING = "crossing";
 
 export const NODE_TYPE_TEST_SPLIT = "split";
 export const NODE_TYPE_TEST_GRID = "grid";
