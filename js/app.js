@@ -55,6 +55,7 @@ let nextReplayRequestId = 1;
 const pendingReplayRequests = new Map();
 
 const REPLAY_INTERVAL_MS = 2000;
+const SETTINGS_APPLY_DEBOUNCE_MS = 500;
 const ZOOM_IN_FACTOR = 0.9;
 const ZOOM_OUT_FACTOR = 1.1;
 const MIN_VIEW_RATIO = 0.12;
@@ -111,6 +112,7 @@ const hoverState = {
 };
 
 const parishState = createParishInteractionState();
+const expandedMetricBreakdowns = new Set();
 
 function activeStepIndex() {
   if (isStepExplanationOpen() || stepSettingsOpen) {
@@ -190,7 +192,7 @@ function regenerate(nextSettings = settings) {
 
 function scheduleRegeneration(nextSettings) {
   clearTimeout(pendingRegeneration);
-  pendingRegeneration = setTimeout(() => regenerate(nextSettings), 80);
+  pendingRegeneration = setTimeout(() => regenerate(nextSettings), SETTINGS_APPLY_DEBOUNCE_MS);
 }
 
 function initStepsUI() {
@@ -970,6 +972,7 @@ function createEntityMetricRows(definition, before = emptyEntityMetrics(), after
     const breakdownCell = document.createElement("td");
     const toggle = document.createElement("button");
     const labelText = document.createElement("span");
+    const expanded = expandedMetricBreakdowns.has(definition.key);
     const layerButton = createMetricVisibilityButton(
       definition.label,
       isLayerVisible(definition.layerId, activeTypeNames),
@@ -979,19 +982,24 @@ function createEntityMetricRows(definition, before = emptyEntityMetrics(), after
 
     breakdownRow.className = "metric-breakdown-row";
     breakdownRow.id = breakdownId;
-    breakdownRow.hidden = true;
+    breakdownRow.hidden = !expanded;
     breakdownCell.colSpan = 4;
 
     toggle.type = "button";
     toggle.className = "metric-breakdown-toggle";
-    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-expanded", String(expanded));
     toggle.setAttribute("aria-controls", breakdownId);
-    toggle.textContent = ">";
+    toggle.textContent = expanded ? "v" : ">";
     toggle.addEventListener("click", () => {
-      const expanded = toggle.getAttribute("aria-expanded") === "true";
-      toggle.setAttribute("aria-expanded", String(!expanded));
-      breakdownRow.hidden = expanded;
-      toggle.textContent = expanded ? ">" : "v";
+      const nextExpanded = toggle.getAttribute("aria-expanded") !== "true";
+      toggle.setAttribute("aria-expanded", String(nextExpanded));
+      breakdownRow.hidden = !nextExpanded;
+      toggle.textContent = nextExpanded ? "v" : ">";
+      if (nextExpanded) {
+        expandedMetricBreakdowns.add(definition.key);
+      } else {
+        expandedMetricBreakdowns.delete(definition.key);
+      }
     });
 
     labelText.appendChild(layerButton);

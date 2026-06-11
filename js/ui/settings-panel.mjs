@@ -317,6 +317,7 @@ function handleSettingsInput(panel, event, onChange) {
     : sourceSettings.seed;
   const nextSettings = cloneSettings(sourceSettings, seed);
   setSettingValue(nextSettings, definition.path, readSettingFromControls(panel, definition));
+  panel.__settingsSource = nextSettings;
   onChange(nextSettings);
 }
 
@@ -338,6 +339,7 @@ function handleSettingsReset(panel, event, onChange) {
     const seed = randomBase32Word();
     writeSettingToControls(panel, path, seed);
     const nextSettings = cloneSettings(panel.__settingsSource ?? defaultSettings, seed);
+    panel.__settingsSource = nextSettings;
     onChange(nextSettings);
     return;
   }
@@ -356,5 +358,6 @@ function handleSettingsReset(panel, event, onChange) {
   const seed = path === "seed" ? getSettingValue(defaultSettings, path) : sourceSettings.seed;
   const nextSettings = cloneSettings(sourceSettings, seed);
   setSettingValue(nextSettings, path, getSettingValue(defaultSettings, path));
+  panel.__settingsSource = nextSettings;
   onChange(nextSettings);
 }
