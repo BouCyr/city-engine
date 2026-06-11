@@ -8,6 +8,7 @@ import * as RIVERS from "./steps/005.2-rivers.mjs";
 import * as TRIBUTARIES from "./steps/006-tributaries.mjs";
 import * as RIVER_CORRIDOR_TOPOLOGY from "./steps/007-river-corridor-topology.mjs";
 import * as SMOOTH_COAST from "./steps/009-smooth-coast.mjs";
+import * as PARISHES from "./steps/010-parishes.mjs";
 
 
 export const steps = [
@@ -162,6 +163,21 @@ export const steps = [
     explanation: (settings, stepResult) => [
       `River corridor topology reads the ordered primary river cells selected by the river search, smooths their centroid path geometrically, offsets it into a corridor polygon, and applies polygon boolean operations to carve land cells.`,
       `Where the carved corridor bisects an original land edge, the step restores a <em>CROSSING</em> edge through the river and marks its endpoints as <em>CROSSING_END</em> nodes.`,
+    ],
+    renderExplanationExtras: null,
+  },
+  {
+    title: "Parishes",
+    process: PARISHES.process,
+    description: () => [
+      `This final step does not alter generation yet. It enables a parish-routing inspection mode on the current map.`,
+      `Left-click a node connected to at least one <em>LAND</em> edge to set the parish start point, then hover another node to preview the weighted shortest path over <em>LAND</em> and <em>CROSSING</em> edges.`,
+      `Right-click anywhere on the map clears the start point and the current preview without changing the generated graph.`,
+    ],
+    explanation: () => [
+      `Parishes is currently a UI-only inspection step. Its process function returns the incoming map unchanged and does not add replay data or mutate graph entities.`,
+      `While this step is selected, the map supports weighted path preview: <em>LAND</em> edges cost 12 times their geometric length and <em>CROSSING</em> edges cost 60 times their geometric length.`,
+      `The selected start node stays marked until it is cleared or the displayed step map changes.`,
     ],
     renderExplanationExtras: null,
   }

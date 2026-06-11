@@ -6,6 +6,23 @@ import {Edge} from "./data/edge.mjs";
 import * as H from "./data/helper.mjs";
 import {Map} from "./data/map.mjs";
 import {Node, Poi} from "./data/nodes.mjs";
+import {
+  buildParishPathGraph,
+  createParishInteractionState,
+  getParishPreviewPath,
+  isSelectableParishStartNode,
+  PARISHES_STEP_TITLE,
+  PARISH_CROSSING_WEIGHT_FACTOR,
+  PARISH_LAND_WEIGHT_FACTOR,
+  setParishPreviewTarget,
+  setParishStartNode,
+  updateParishGraphCache,
+} from "./data/parishes.mjs";
+import {
+  buildWeightedNodeGraph,
+  computeShortestPathTree,
+  reconstructShortestPath,
+} from "./data/pathfinding.mjs";
 import {SETTING_GROUPS, Settings} from "./data/settings.mjs";
 import {runPipeline} from "./pipeline.mjs";
 import {
@@ -30,6 +47,7 @@ import {
   EDGE_TYPE_LAND,
   EDGE_TYPE_MOUTH,
   EDGE_TYPE_RIVER,
+  EDGE_TYPE_SEA,
   EDGE_TYPE_VORONOI,
   MAP_FLAG_BOUNDARY,
   MAP_FLAG_COAST_GAP,
@@ -202,6 +220,27 @@ function createHoverFixture() {
   map.edges.push(ab, bc, cd, da, be, ef, fc);
   map.cells.push(left, right);
   return {map, left, right, shared: bc, node: b};
+}
+
+function createParishFixture() {
+  const settings = new Settings("parishes-fixture");
+  const map = new Map(settings);
+  const a = Node("A", 0, 0, NODE_TYPE_TEST_FIXTURE);
+  const b = Node("B", 3, 0, NODE_TYPE_TEST_FIXTURE);
+  const c = Node("C", 0, 4, NODE_TYPE_TEST_FIXTURE);
+  const d = Node("D", 3, 4, NODE_TYPE_TEST_FIXTURE);
+  const e = Node("E", 30, 30, NODE_TYPE_TEST_FIXTURE);
+  const f = Node("F", 36, 30, NODE_TYPE_TEST_FIXTURE);
+
+  const ab = Edge("AB", a, b, EDGE_TYPE_CROSSING);
+  const ac = Edge("AC", a, c, EDGE_TYPE_LAND);
+  const cd = Edge("CD", c, d, EDGE_TYPE_LAND);
+  const bd = Edge("BD", b, d, EDGE_TYPE_LAND);
+  const ef = Edge("EF", e, f, EDGE_TYPE_SEA);
+
+  map.nodes.push(a, b, c, d, e, f);
+  map.edges.push(ab, ac, cd, bd, ef);
+  return {map, nodes: {a, b, c, d, e, f}, edges: {ab, ac, cd, bd, ef}};
 }
 
 function validateCloneIdentityAndFlags() {
@@ -525,6 +564,7 @@ function validateHoverIndexBuildsConnectedEdgesAndNodes() {
   const index = buildHoverIndex(map);
   const hovered = describeHoveredEntity(index, {kind: "edge", id: shared.id});
 
+  assert.equal(hovered.details.length, 10);
   assert.deepEqual(hovered.details.connectedNodeIds, ["B", "C"]);
   assert.deepEqual(hovered.details.connectedCellIds, ["left", "right"]);
   assert.deepEqual(hovered.details.connectedEdgeIds, ["AB", "BE", "CD", "FC"]);
@@ -540,6 +580,111 @@ function validateHoverIndexBuildsConnectedCellsAndNeighboringNodesForNode() {
   assert.deepEqual(hovered.details.connectedCellIds, ["left", "right"]);
   assert.deepEqual(hovered.details.neighboringNodeIds, ["A", "C", "E"]);
   assert.deepEqual(hovered.details.tags, [MAP_FLAG_TEST_GATE]);
+}
+
+function validateParishesRegisteredAsFinalNoOpStep() {
+  const settings = new Settings("parishes-step");
+  const map = new Map(settings);
+  const step = steps.at(-1);
+
+  assert.equal(step?.title, PARISHES_STEP_TITLE);
+  assert.equal(step?.createReplay, undefined);
+  assert.equal(step?.process(settings, map), map);
+}
+
+function validateParishesStepUsesGlobalSettingsOnly() {
+  const parishesSettings = settingsForStep(PARISHES_STEP_TITLE);
+
+  assert.deepEqual(
+    parishesSettings.map(({definition}) => definition.path).sort(),
+    ["pipeline.maxStepMs", "seed", "size"]
+  );
+}
+
+function validateWeightedGraphFiltersAndWeightsParishEdges() {
+  const {map, edges, nodes} = createParishFixture();
+  const graph = buildParishPathGraph(map);
+  const fromA = graph.getNeighbors(nodes.a);
+
+  assert.deepEqual(
+    fromA.map((entry) => entry.edge.id).sort(),
+    ["AB", "AC"]
+  );
+  assert.equal(fromA.find((entry) => entry.edge === edges.ab)?.weight, PARISH_CROSSING_WEIGHT_FACTOR * 3);
+  assert.equal(fromA.find((entry) => entry.edge === edges.ac)?.weight, PARISH_LAND_WEIGHT_FACTOR * 4);
+  assert.equal(graph.getNeighbors(nodes.e).length, 0);
+}
+
+function validateDijkstraPrefersLowerWeightedRoute() {
+  const {map, nodes, edges} = createParishFixture();
+  const graph = buildWeightedNodeGraph(map, {
+    edgeFilter: (edge) => edge.type === EDGE_TYPE_LAND || edge.type === EDGE_TYPE_CROSSING,
+    edgeWeight: ({edge, length}) => edge.type === EDGE_TYPE_CROSSING ? 100 * length : length,
+  });
+  const tree = computeShortestPathTree(graph, nodes.a);
+  const path = reconstructShortestPath(tree, nodes.b);
+
+  assert.ok(path);
+  assert.deepEqual(path.edges.map((edge) => edge.id), [edges.ac.id, edges.cd.id, edges.bd.id]);
+  assert.equal(path.totalLength, 11);
+}
+
+function validateDisconnectedTargetReturnsNoPath() {
+  const {map, nodes} = createParishFixture();
+  const graph = buildParishPathGraph(map);
+  const tree = computeShortestPathTree(graph, nodes.a);
+
+  assert.equal(reconstructShortestPath(tree, nodes.e), null);
+}
+
+function validateReconstructedPathPreservesCanonicalReferences() {
+  const {map, nodes, edges} = createParishFixture();
+  const graph = buildParishPathGraph(map);
+  const tree = computeShortestPathTree(graph, nodes.a);
+  const path = reconstructShortestPath(tree, nodes.d);
+
+  assert.equal(path.nodes[0], map.nodes[0]);
+  assert.equal(path.nodes[1], nodes.c);
+  assert.equal(path.nodes[2], nodes.d);
+  assert.equal(path.edges[0], edges.ac);
+  assert.equal(path.edges[1], edges.cd);
+}
+
+function validateSelectableParishStartRequiresLandEdge() {
+  const {nodes} = createParishFixture();
+
+  assert.equal(isSelectableParishStartNode(nodes.a), true);
+  assert.equal(isSelectableParishStartNode(nodes.b), true);
+  assert.equal(isSelectableParishStartNode(nodes.e), false);
+}
+
+function validateParishStartChangeRecomputesShortestPathTree() {
+  const {map, nodes} = createParishFixture();
+  const state = createParishInteractionState();
+
+  updateParishGraphCache(state, map);
+  setParishStartNode(state, nodes.a.id);
+  const firstTree = state.shortestPathTree;
+  setParishStartNode(state, nodes.a.id);
+  assert.equal(state.shortestPathTree, firstTree);
+
+  setParishStartNode(state, nodes.c.id);
+  assert.notEqual(state.shortestPathTree, firstTree);
+  assert.equal(state.startNodeId, nodes.c.id);
+}
+
+function validateParishPreviewReconstructsOrderedEdgeChain() {
+  const {map, edges, nodes} = createParishFixture();
+  const state = createParishInteractionState();
+
+  updateParishGraphCache(state, map);
+  setParishStartNode(state, nodes.a.id);
+  setParishPreviewTarget(state, nodes.d.id);
+  const preview = getParishPreviewPath(state);
+
+  assert.ok(preview);
+  assert.deepEqual(preview.nodes.map((node) => node.id), ["A", "C", "D"]);
+  assert.deepEqual(preview.edges.map((edge) => edge.id), [edges.ac.id, edges.cd.id]);
 }
 
 function validateCellDrawing() {
@@ -2818,6 +2963,15 @@ validateMapClearClearsOverlay();
 validateHoverIndexBuildsCellNeighborsAndArea();
 validateHoverIndexBuildsConnectedEdgesAndNodes();
 validateHoverIndexBuildsConnectedCellsAndNeighboringNodesForNode();
+validateParishesRegisteredAsFinalNoOpStep();
+validateParishesStepUsesGlobalSettingsOnly();
+validateWeightedGraphFiltersAndWeightsParishEdges();
+validateDijkstraPrefersLowerWeightedRoute();
+validateDisconnectedTargetReturnsNoPath();
+validateReconstructedPathPreservesCanonicalReferences();
+validateSelectableParishStartRequiresLandEdge();
+validateParishStartChangeRecomputesShortestPathTree();
+validateParishPreviewReconstructsOrderedEdgeChain();
 validateCellDrawing();
 validateAreaBoundaryPathSeparatesCornerTouchingCells();
 validateAreaBoundaryPathMergesEdgeConnectedCells();

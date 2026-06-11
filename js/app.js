@@ -4,6 +4,17 @@ import {Map as CityMap} from "./data/map.mjs";
 import {hydrateReplay, plainSettings, serializeMap} from "./replay-service.mjs";
 import {areaBoundaryPath} from "./data/area.mjs";
 import {orderedCellPoints} from "./data/cell.mjs";
+import {
+  clearParishSelection,
+  createParishInteractionState,
+  getParishPreviewPath,
+  isSelectableParishStartNode,
+  PARISHES_STEP_TITLE,
+  resetParishInteractionState,
+  setParishPreviewTarget,
+  setParishStartNode,
+  updateParishGraphCache,
+} from "./data/parishes.mjs";
 import {createDefaultSettings, renderStepSettingsForm} from "./ui/settings-panel.mjs";
 import {buildHoverIndex, describeHoveredEntity} from "./ui/map-hover.mjs";
 import {
@@ -97,6 +108,8 @@ const hoverState = {
   displayMap: null,
 };
 
+const parishState = createParishInteractionState();
+
 function activeStepIndex() {
   if (isStepExplanationOpen() || stepSettingsOpen) {
     return selectedStepIndex;
@@ -115,6 +128,7 @@ function renderCurrentMap() {
     applyCameraForSize(displayMap?.size ?? settings.size);
     displayMap.clear(svgDomElt);
     clearHoverState();
+    resetParishInteractionState(parishState);
     renderGenerationError();
     return;
   }
@@ -125,6 +139,9 @@ function renderCurrentMap() {
   const displayMap = replayFrame?.map ?? result?.map ?? map;
 
   hoverState.hovered = null;
+  if (isParishesSelected()) {
+    setParishPreviewTarget(parishState, null);
+  }
   applyCameraForSize(displayMap?.size ?? settings.size);
   displayMap.clear(svgDomElt);
   displayMap.draw(svgDomElt);
@@ -133,6 +150,7 @@ function renderCurrentMap() {
   drawDebugDisplayEntities(displayMap);
   applyMapDisplayVisibility();
   prepareHoverState(displayMap);
+  syncParishState(displayMap);
   renderInteractionLayer();
   renderStepDetails(steps[index], result);
   renderStepExplanation();
@@ -155,6 +173,7 @@ function regenerate(nextSettings = settings) {
     map = map ?? new CityMap(settings);
     stepResults = [];
   }
+  resetParishInteractionState(parishState);
   selectedStepIndex = Math.min(selectedStepIndex, steps.length - 1);
   replayFrameIndex = 0;
   stopReplayPlayback();
@@ -245,6 +264,9 @@ function updateSelectedStep() {
   document.querySelectorAll("#steps-list .step-item").forEach((item) => {
     item.classList.toggle("selected-step", Number(item.dataset.stepIndex) === selectedStepIndex);
   });
+  if (!isParishesSelected()) {
+    resetParishInteractionState(parishState);
+  }
 }
 
 function renderStepDetails(step, result) {
@@ -302,6 +324,27 @@ function clearHoverState() {
   hoverState.displayMap = null;
 }
 
+function isParishesSelected() {
+  return steps[selectedStepIndex]?.title === PARISHES_STEP_TITLE;
+}
+
+function syncParishState(displayMap) {
+  if (!isParishesSelected()) {
+    resetParishInteractionState(parishState);
+    return;
+  }
+
+  updateParishGraphCache(parishState, displayMap);
+}
+
+function isParishPreviewEnabled() {
+  return isParishesSelected()
+    && !stepSettingsOpen
+    && !isStepExplanationOpen()
+    && !panState.active
+    && !generationError;
+}
+
 function isHoverInspectionEnabled() {
   return !stepSettingsOpen && !isStepExplanationOpen() && !panState.active && !generationError;
 }
@@ -334,6 +377,7 @@ function renderHoveredEntityDetails(body, hovered) {
   } else if (hovered.kind === "edge") {
     appendEntityDetailRow(section, "Id", hovered.details.id);
     appendEntityDetailRow(section, "Type", hovered.details.type);
+    appendEntityDetailRow(section, "Length", formatHoverLength(hovered.details.length));
     appendEntityDetailRow(section, "Tags", hovered.details.tags, {chips: true});
     appendEntityDetailRow(section, "Connected edges", formatCount(hovered.details.connectedEdgeIds.length));
     appendEntityDetailRow(section, "Connected edge ids", hovered.details.connectedEdgeIds, {kbdList: true});
@@ -417,6 +461,11 @@ function appendChipList(parent, values) {
 function formatHoverArea(value) {
   if (!Number.isFinite(value)) return "0";
   return `${Math.round(value * 100) / 100} svg units²`;
+}
+
+function formatHoverLength(value) {
+  if (!Number.isFinite(value)) return "0";
+  return `${Math.round(value * 100) / 100} svg units`;
 }
 
 function formatTypeCountList(entries) {
@@ -1255,22 +1304,76 @@ function renderInteractionLayer() {
   if (!layer) return;
 
   layer.innerHTML = "";
-  if (!isHoverInspectionEnabled() || !hoverState.index) return;
+  const hoverEnabled = isHoverInspectionEnabled() && !!hoverState.index;
+  const parishEnabled = isParishesSelected();
+  if (!hoverEnabled && !parishEnabled) return;
 
+  const parishGroup = document.createElementNS(SVG_NS, "g");
   const highlightGroup = document.createElementNS(SVG_NS, "g");
   const hitGroup = document.createElementNS(SVG_NS, "g");
+  parishGroup.setAttribute("class", "parish-interactions");
   highlightGroup.setAttribute("class", "map-hover-highlights");
   hitGroup.setAttribute("class", "map-hover-targets");
 
-  const hovered = currentHoveredDescription();
-  if (hovered) {
-    appendHoverHighlights(highlightGroup, hovered);
+  if (parishEnabled) {
+    appendParishOverlay(parishGroup);
   }
 
-  appendCellHitTargets(hitGroup);
-  appendEdgeHitTargets(hitGroup);
-  appendNodeHitTargets(hitGroup);
-  layer.append(highlightGroup, hitGroup);
+  if (hoverEnabled) {
+    const hovered = currentHoveredDescription();
+    if (hovered) {
+      appendHoverHighlights(highlightGroup, hovered);
+    }
+
+    appendCellHitTargets(hitGroup);
+    appendEdgeHitTargets(hitGroup);
+    appendNodeHitTargets(hitGroup);
+  }
+
+  layer.append(parishGroup, highlightGroup, hitGroup);
+}
+
+function appendParishOverlay(group) {
+  const startNode = parishState.graph?.getNode?.(parishState.startNodeId);
+  if (!startNode) return;
+
+  const preview = isParishPreviewEnabled() ? getParishPreviewPath(parishState) : null;
+  if (preview?.nodes?.length > 1) {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", buildParishOverlayPath(preview.nodes));
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "#111");
+    path.setAttribute("stroke-width", "10");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    group.appendChild(path);
+  }
+
+  const ring = document.createElementNS(SVG_NS, "circle");
+  ring.setAttribute("cx", startNode.x);
+  ring.setAttribute("cy", startNode.y);
+  ring.setAttribute("r", String(nodeRadiusForType(startNode.type) + 8));
+  ring.setAttribute("fill", "none");
+  ring.setAttribute("stroke", "#111");
+  ring.setAttribute("stroke-width", "3");
+
+  const fill = document.createElementNS(SVG_NS, "circle");
+  fill.setAttribute("cx", startNode.x);
+  fill.setAttribute("cy", startNode.y);
+  fill.setAttribute("r", String(nodeRadiusForType(startNode.type) + 2));
+  fill.setAttribute("fill", "#111");
+  fill.setAttribute("fill-opacity", "0.85");
+  fill.setAttribute("stroke", "#f5f1e8");
+  fill.setAttribute("stroke-width", "2");
+
+  group.append(ring, fill);
+}
+
+function buildParishOverlayPath(nodes) {
+  if (!nodes?.length) return "";
+  return nodes
+    .map((node, index) => `${index === 0 ? "M" : "L"} ${node.x} ${node.y}`)
+    .join(" ");
 }
 
 function appendHoverHighlights(group, hovered) {
@@ -1366,6 +1469,12 @@ function setHoveredEntity(nextHovered) {
   if (same) return;
 
   hoverState.hovered = nextHovered;
+  if (isParishesSelected()) {
+    const previewTargetId = isParishPreviewEnabled() && nextHovered?.kind === "node"
+      ? nextHovered.id
+      : null;
+    setParishPreviewTarget(parishState, previewTargetId);
+  }
   renderInteractionLayer();
   renderStepDetails(steps[activeStepIndex()], resultForStep(activeStepIndex()));
 }
@@ -1576,6 +1685,7 @@ function initMapInteractions() {
   svgDomElt.addEventListener("pointerup", onMapPointerUp);
   svgDomElt.addEventListener("pointercancel", onMapPointerUp);
   svgDomElt.addEventListener("pointerleave", onMapPointerLeave);
+  svgDomElt.addEventListener("contextmenu", onMapContextMenu);
   svgDomElt.addEventListener("dblclick", () => resetCamera(settings.size));
 }
 
@@ -1589,6 +1699,18 @@ function onMapWheel(event) {
 
 function onMapPointerDown(event) {
   if (event.button !== 0 || !svgDomElt) return;
+
+  const hoveredTarget = hoverTargetFromEventTarget(event.target);
+  if (isParishesSelected() && hoveredTarget?.kind === "node") {
+    const node = parishState.graph?.getNode?.(hoveredTarget.id);
+    if (node && isSelectableParishStartNode(node)) {
+      event.preventDefault();
+      setHoveredEntity(hoveredTarget);
+      setParishStartNode(parishState, node.id);
+      renderInteractionLayer();
+      return;
+    }
+  }
 
   const point = clientToMapPoint(event.clientX, event.clientY);
   if (!point) return;
@@ -1641,6 +1763,20 @@ function onMapPointerUp(event) {
 function onMapPointerLeave() {
   if (panState.active) return;
   setHoveredEntity(null);
+}
+
+function onMapContextMenu(event) {
+  if (!isParishesSelected()) {
+    return;
+  }
+
+  event.preventDefault();
+  clearParishSelectionAndRender();
+}
+
+function clearParishSelectionAndRender() {
+  clearParishSelection(parishState);
+  renderInteractionLayer();
 }
 
 function zoomAtClientPoint(clientX, clientY, scale) {

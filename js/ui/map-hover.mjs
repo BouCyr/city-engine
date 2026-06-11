@@ -34,6 +34,7 @@ export function buildHoverIndex(map) {
     edges.set(edge.id, {
       kind: "edge",
       entity: edge,
+      length: edgeLength(edge),
       connectedEdges,
       connectedNodes: uniqueById([edge.start, edge.end]),
       connectedCells: uniqueById([edge.leftCell, edge.rightCell]),
@@ -108,6 +109,7 @@ export function describeHoveredEntity(index, hovered) {
       details: {
         id: edge.entity.id,
         type: edge.entity.type,
+        length: edge.length,
         connectedEdgeIds: sortedEntityIds(edge.connectedEdges),
         connectedNodeIds: sortedEntityIds(edge.connectedNodes),
         connectedCellIds: sortedEntityIds(edge.connectedCells),
@@ -203,6 +205,13 @@ function polygonArea(points) {
     twiceArea += current.x * next.y - next.x * current.y;
   }
   return Math.abs(twiceArea) / 2;
+}
+
+function edgeLength(edge) {
+  const start = edge?.start;
+  const end = edge?.end;
+  if (!start || !end) return 0;
+  return Math.hypot(end.x - start.x, end.y - start.y);
 }
 
 function sortedStrings(values) {

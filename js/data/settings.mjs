@@ -56,7 +56,7 @@ export function Settings(seed="Hello world!") {
   }
 }
 
-const ALL_STEPS = ["Scatter", "Gather", "Lloyd", "Prune", "Coast", "Needles", "Rivers", "Tributaries", "Smooth coast", "River corridor topology"];
+const ALL_STEPS = ["Scatter", "Gather", "Lloyd", "Prune", "Coast", "Needles", "Rivers", "Tributaries", "Smooth coast", "River corridor topology", "Parishes"];
 
 export const SETTING_GROUPS = [
   {
