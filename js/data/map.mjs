@@ -50,11 +50,13 @@ export function Map(settings){
       const edgesG = svgDomElt.querySelector("#edges");
       const cellsG = svgDomElt.querySelector("#cells");
       const overlayG = svgDomElt.querySelector("#overlay");
+      const interactionsG = svgDomElt.querySelector("#interactions");
       if (areasG) areasG.innerHTML = "";
       if (cellsG) cellsG.innerHTML = "";
       if (nodesG) nodesG.innerHTML = "";
       if (edgesG) edgesG.innerHTML = "";
       if (overlayG) overlayG.innerHTML = "";
+      if (interactionsG) interactionsG.innerHTML = "";
     }
   };
 

@@ -26,6 +26,10 @@
   cursor: grabbing;
 }
 
+#interactions {
+  pointer-events: none;
+}
+
 [data-legend-layer].legend-hidden {
   display: none;
 }
@@ -132,6 +136,70 @@
   stroke: rgba(22, 42, 54, 0.8);
   stroke-width: 1.2;
   pointer-events: none;
+}
+
+.map-hover-highlights,
+.map-hover-highlights * {
+  pointer-events: none;
+}
+
+.map-hover-targets,
+.map-hover-targets * {
+  pointer-events: auto;
+}
+
+.map-hit-target {
+  vector-effect: non-scaling-stroke;
+}
+
+.hover-cell-active {
+  fill: color-mix(in srgb, var(--accent-color) 34%, transparent);
+  stroke: color-mix(in srgb, var(--accent-color) 85%, white);
+  stroke-width: 6;
+}
+
+.hover-cell-neighbor {
+  fill: color-mix(in srgb, var(--accent-color) 18%, transparent);
+  stroke: color-mix(in srgb, var(--accent-color) 42%, white);
+  stroke-width: 3;
+}
+
+.hover-edge-active,
+.hover-edge-neighbor {
+  fill: none;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.hover-edge-active {
+  stroke: color-mix(in srgb, var(--accent-color) 90%, white);
+  stroke-width: 18;
+  opacity: 0.6;
+  filter: drop-shadow(0 0 14px color-mix(in srgb, var(--accent-color) 58%, white));
+}
+
+.hover-edge-neighbor {
+  stroke: color-mix(in srgb, var(--accent-color) 62%, white);
+  stroke-width: 12;
+  opacity: 0.35;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent-color) 36%, white));
+}
+
+.hover-node-active,
+.hover-node-neighbor {
+  stroke: none;
+}
+
+.hover-node-active {
+  fill: color-mix(in srgb, var(--accent-color) 72%, white);
+  opacity: 0.72;
+  filter: drop-shadow(0 0 14px color-mix(in srgb, var(--accent-color) 52%, white));
+}
+
+.hover-node-neighbor {
+  fill: color-mix(in srgb, var(--accent-color) 42%, white);
+  opacity: 0.42;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent-color) 28%, white));
 }
 
 #area-inner-border-sea-flood {

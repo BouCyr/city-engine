@@ -5,6 +5,7 @@ import {hydrateReplay, plainSettings, serializeMap} from "./replay-service.mjs";
 import {areaBoundaryPath} from "./data/area.mjs";
 import {orderedCellPoints} from "./data/cell.mjs";
 import {createDefaultSettings, renderStepSettingsForm} from "./ui/settings-panel.mjs";
+import {buildHoverIndex, describeHoveredEntity} from "./ui/map-hover.mjs";
 import {
   EDGE_TYPE_COAST,
   EDGE_TYPE_CROSSING,
@@ -47,6 +48,9 @@ const MIN_VIEW_RATIO = 0.12;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const DEFAULT_NODE_RADIUS = 6;
 const TERRAIN_NODE_RADIUS = DEFAULT_NODE_RADIUS / 2;
+const CELL_HIT_FILL = "rgb(0 0 0 / 0.001)";
+const EDGE_HIT_WIDTH = 18;
+const NODE_HIT_RADIUS_PAD = 8;
 const ENTITY_METRICS = [
   {label: "Nodes", key: "nodes", layerId: "nodes"},
   {label: "Edges", key: "edges", layerId: "edges"},
@@ -87,6 +91,12 @@ const panState = {
   lastPoint: null,
 };
 
+const hoverState = {
+  hovered: null,
+  index: null,
+  displayMap: null,
+};
+
 function activeStepIndex() {
   if (isStepExplanationOpen() || stepSettingsOpen) {
     return selectedStepIndex;
@@ -104,6 +114,7 @@ function renderCurrentMap() {
     const displayMap = map ?? new CityMap(settings);
     applyCameraForSize(displayMap?.size ?? settings.size);
     displayMap.clear(svgDomElt);
+    clearHoverState();
     renderGenerationError();
     return;
   }
@@ -113,6 +124,7 @@ function renderCurrentMap() {
   const replayFrame = activeReplayFrame();
   const displayMap = replayFrame?.map ?? result?.map ?? map;
 
+  hoverState.hovered = null;
   applyCameraForSize(displayMap?.size ?? settings.size);
   displayMap.clear(svgDomElt);
   displayMap.draw(svgDomElt);
@@ -120,6 +132,8 @@ function renderCurrentMap() {
   seedDefaultNodeDisplayTypes(displayMap);
   drawDebugDisplayEntities(displayMap);
   applyMapDisplayVisibility();
+  prepareHoverState(displayMap);
+  renderInteractionLayer();
   renderStepDetails(steps[index], result);
   renderStepExplanation();
 }
@@ -251,6 +265,12 @@ function renderStepDetails(step, result) {
     return;
   }
 
+  const hovered = currentHoveredDescription();
+  if (hovered) {
+    renderHoveredEntityDetails(body, hovered);
+    return;
+  }
+
   if (step.description) {
     const paragraphs = step.description(settings, result?.map);
     paragraphs.forEach((paragraph) => {
@@ -263,6 +283,158 @@ function renderStepDetails(step, result) {
   if (result?.metrics) {
     body.appendChild(createMetricsDetails(result.metrics));
   }
+}
+
+function prepareHoverState(displayMap) {
+  hoverState.index = buildHoverIndex(displayMap);
+  hoverState.displayMap = displayMap;
+  if (!hoverState.hovered) return;
+
+  const match = hoverState.index.get(hoverState.hovered.kind, hoverState.hovered.id);
+  if (!match) {
+    hoverState.hovered = null;
+  }
+}
+
+function clearHoverState() {
+  hoverState.hovered = null;
+  hoverState.index = null;
+  hoverState.displayMap = null;
+}
+
+function isHoverInspectionEnabled() {
+  return !stepSettingsOpen && !isStepExplanationOpen() && !panState.active && !generationError;
+}
+
+function currentHoveredDescription() {
+  if (!isHoverInspectionEnabled() || !hoverState.index || !hoverState.hovered) {
+    return null;
+  }
+  return describeHoveredEntity(hoverState.index, hoverState.hovered);
+}
+
+function renderHoveredEntityDetails(body, hovered) {
+  const section = document.createElement("section");
+  const title = document.createElement("h4");
+
+  section.className = "entity-details";
+  title.className = "entity-details-title";
+  title.textContent = `${capitalize(hovered.kind)} details`;
+  section.appendChild(title);
+
+  if (hovered.kind === "cell") {
+    appendEntityDetailRow(section, "Id", hovered.details.id);
+    appendEntityDetailRow(section, "Type", hovered.details.type);
+    appendEntityDetailRow(section, "Area", formatHoverArea(hovered.details.area));
+    appendEntityDetailRow(section, "Edges", formatCount(hovered.details.edgeCount));
+    appendEntityDetailRow(section, "Edges by type", formatTypeCountList(hovered.details.edgeTypeCounts));
+    appendEntityDetailRow(section, "Neighbours", formatCount(hovered.details.neighborIds.length));
+    appendEntityDetailRow(section, "Neighbour ids", hovered.details.neighborIds, {kbdList: true});
+    appendEntityDetailRow(section, "Tags", hovered.details.tags, {chips: true});
+  } else if (hovered.kind === "edge") {
+    appendEntityDetailRow(section, "Id", hovered.details.id);
+    appendEntityDetailRow(section, "Type", hovered.details.type);
+    appendEntityDetailRow(section, "Tags", hovered.details.tags, {chips: true});
+    appendEntityDetailRow(section, "Connected edges", formatCount(hovered.details.connectedEdgeIds.length));
+    appendEntityDetailRow(section, "Connected edge ids", hovered.details.connectedEdgeIds, {kbdList: true});
+    appendEntityDetailRow(section, "Connected nodes", formatCount(hovered.details.connectedNodeIds.length));
+    appendEntityDetailRow(section, "Connected node ids", hovered.details.connectedNodeIds, {kbdList: true});
+    appendEntityDetailRow(section, "Connected cells", formatCount(hovered.details.connectedCellIds.length));
+    appendEntityDetailRow(section, "Connected cell ids", hovered.details.connectedCellIds, {kbdList: true});
+  } else if (hovered.kind === "node") {
+    appendEntityDetailRow(section, "Id", hovered.details.id);
+    appendEntityDetailRow(section, "Type", hovered.details.type);
+    appendEntityDetailRow(section, "Tags", hovered.details.tags, {chips: true});
+    appendEntityDetailRow(section, "Connected edges", formatCount(hovered.details.connectedEdgeIds.length));
+    appendEntityDetailRow(section, "Connected edge ids", hovered.details.connectedEdgeIds, {kbdList: true});
+    appendEntityDetailRow(section, "Connected cells", formatCount(hovered.details.connectedCellIds.length));
+    appendEntityDetailRow(section, "Connected cell ids", hovered.details.connectedCellIds, {kbdList: true});
+    appendEntityDetailRow(section, "Neighbouring nodes", formatCount(hovered.details.neighboringNodeIds.length));
+    appendEntityDetailRow(section, "Neighbour node ids", hovered.details.neighboringNodeIds, {kbdList: true});
+  }
+
+  body.appendChild(section);
+}
+
+function appendEntityDetailRow(parent, label, value, options = {}) {
+  const row = document.createElement("div");
+  const term = document.createElement("div");
+  const definition = document.createElement("div");
+
+  row.className = "entity-details-row";
+  term.className = "entity-details-term";
+  definition.className = "entity-details-value";
+  term.textContent = label;
+
+  if (options.kbdList) {
+    appendKbdList(definition, value);
+  } else if (options.chips) {
+    appendChipList(definition, value);
+  } else {
+    definition.textContent = formatDetailValue(value);
+    if (!hasDetailValue(value)) definition.classList.add("entity-details-empty");
+  }
+
+  row.append(term, definition);
+  parent.appendChild(row);
+}
+
+function appendKbdList(parent, values) {
+  const items = Array.isArray(values) ? values : [];
+  if (items.length === 0) {
+    parent.textContent = "none";
+    parent.classList.add("entity-details-empty");
+    return;
+  }
+
+  items.forEach((value, index) => {
+    if (index > 0) parent.append(document.createTextNode(", "));
+    const kbd = document.createElement("kbd");
+    kbd.textContent = value;
+    parent.appendChild(kbd);
+  });
+}
+
+function appendChipList(parent, values) {
+  const items = Array.isArray(values) ? values : [];
+  if (items.length === 0) {
+    parent.textContent = "none";
+    parent.classList.add("entity-details-empty");
+    return;
+  }
+
+  const list = document.createElement("div");
+  list.className = "entity-chip-list";
+  items.forEach((value) => {
+    const chip = document.createElement("span");
+    chip.className = "entity-chip";
+    chip.textContent = value;
+    list.appendChild(chip);
+  });
+  parent.appendChild(list);
+}
+
+function formatHoverArea(value) {
+  if (!Number.isFinite(value)) return "0";
+  return `${Math.round(value * 100) / 100} svg units²`;
+}
+
+function formatTypeCountList(entries) {
+  if (!entries?.length) return "none";
+  return entries.map(([type, count]) => `${type}: ${count}`).join(", ");
+}
+
+function hasDetailValue(value) {
+  if (Array.isArray(value)) return value.length > 0;
+  return value !== undefined && value !== null && value !== "";
+}
+
+function formatDetailValue(value) {
+  return hasDetailValue(value) ? String(value) : "none";
+}
+
+function capitalize(value) {
+  return value ? `${value.slice(0, 1).toUpperCase()}${value.slice(1)}` : "";
 }
 
 function createDetailsHeader(step) {
@@ -1078,6 +1250,135 @@ function applyMapDisplayVisibility() {
   }
 }
 
+function renderInteractionLayer() {
+  const layer = svgDomElt?.getElementById("interactions");
+  if (!layer) return;
+
+  layer.innerHTML = "";
+  if (!isHoverInspectionEnabled() || !hoverState.index) return;
+
+  const highlightGroup = document.createElementNS(SVG_NS, "g");
+  const hitGroup = document.createElementNS(SVG_NS, "g");
+  highlightGroup.setAttribute("class", "map-hover-highlights");
+  hitGroup.setAttribute("class", "map-hover-targets");
+
+  const hovered = currentHoveredDescription();
+  if (hovered) {
+    appendHoverHighlights(highlightGroup, hovered);
+  }
+
+  appendCellHitTargets(hitGroup);
+  appendEdgeHitTargets(hitGroup);
+  appendNodeHitTargets(hitGroup);
+  layer.append(highlightGroup, hitGroup);
+}
+
+function appendHoverHighlights(group, hovered) {
+  if (hovered.kind === "cell") {
+    for (const cellId of hovered.highlight.cells) {
+      const cellInfo = hoverState.index.get("cell", cellId);
+      if (!cellInfo || cellInfo.points.length < 3) continue;
+      const polygon = document.createElementNS(SVG_NS, "polygon");
+      polygon.setAttribute("class", cellId === hovered.entity.id ? "hover-cell-active" : "hover-cell-neighbor");
+      polygon.setAttribute("points", cellInfo.points.map((point) => `${point.x},${point.y}`).join(" "));
+      group.appendChild(polygon);
+    }
+    return;
+  }
+
+  if (hovered.kind === "edge") {
+    for (const edgeId of hovered.highlight.edges) {
+      const edgeInfo = hoverState.index.get("edge", edgeId);
+      const edge = edgeInfo?.entity;
+      if (!edge?.start || !edge?.end) continue;
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("class", edgeId === hovered.entity.id ? "hover-edge-active" : "hover-edge-neighbor");
+      path.setAttribute("d", `M ${edge.start.x} ${edge.start.y} L ${edge.end.x} ${edge.end.y}`);
+      group.appendChild(path);
+    }
+    return;
+  }
+
+  for (const nodeId of hovered.highlight.nodes) {
+    const nodeInfo = hoverState.index.get("node", nodeId);
+    const node = nodeInfo?.entity;
+    if (!node) continue;
+    const circle = document.createElementNS(SVG_NS, "circle");
+    circle.setAttribute("class", nodeId === hovered.entity.id ? "hover-node-active" : "hover-node-neighbor");
+    circle.setAttribute("cx", node.x);
+    circle.setAttribute("cy", node.y);
+    circle.setAttribute("r", String(nodeRadiusForType(node.type) + 4));
+    group.appendChild(circle);
+  }
+}
+
+function appendCellHitTargets(group) {
+  for (const cell of hoverState.displayMap?.cells ?? []) {
+    const points = safeOrderedCellPoints(cell);
+    if (points.length < 3) continue;
+    const polygon = document.createElementNS(SVG_NS, "polygon");
+    polygon.setAttribute("class", "map-hit-target map-hit-cell");
+    polygon.setAttribute("points", points.map((point) => `${point.x},${point.y}`).join(" "));
+    polygon.setAttribute("fill", CELL_HIT_FILL);
+    polygon.setAttribute("stroke", "none");
+    tagHoverTarget(polygon, "cell", cell.id);
+    group.appendChild(polygon);
+  }
+}
+
+function appendEdgeHitTargets(group) {
+  for (const edge of hoverState.displayMap?.edges ?? []) {
+    if (!edge?.start || !edge?.end) continue;
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("class", "map-hit-target map-hit-edge");
+    path.setAttribute("d", `M ${edge.start.x} ${edge.start.y} L ${edge.end.x} ${edge.end.y}`);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", CELL_HIT_FILL);
+    path.setAttribute("stroke-width", String(EDGE_HIT_WIDTH));
+    path.setAttribute("stroke-linecap", "round");
+    tagHoverTarget(path, "edge", edge.id);
+    group.appendChild(path);
+  }
+}
+
+function appendNodeHitTargets(group) {
+  for (const node of hoverState.displayMap?.nodes ?? []) {
+    if (!node) continue;
+    const circle = document.createElementNS(SVG_NS, "circle");
+    circle.setAttribute("class", "map-hit-target map-hit-node");
+    circle.setAttribute("cx", node.x);
+    circle.setAttribute("cy", node.y);
+    circle.setAttribute("r", String(nodeRadiusForType(node.type) + NODE_HIT_RADIUS_PAD));
+    circle.setAttribute("fill", CELL_HIT_FILL);
+    tagHoverTarget(circle, "node", node.id);
+    group.appendChild(circle);
+  }
+}
+
+function tagHoverTarget(element, kind, id) {
+  element.dataset.entityKind = kind;
+  element.dataset.entityId = id;
+}
+
+function setHoveredEntity(nextHovered) {
+  const current = hoverState.hovered;
+  const same = current?.kind === nextHovered?.kind && current?.id === nextHovered?.id;
+  if (same) return;
+
+  hoverState.hovered = nextHovered;
+  renderInteractionLayer();
+  renderStepDetails(steps[activeStepIndex()], resultForStep(activeStepIndex()));
+}
+
+function hoverTargetFromEventTarget(target) {
+  const element = target?.closest?.("[data-entity-kind][data-entity-id]");
+  if (!element) return null;
+  return {
+    kind: element.dataset.entityKind,
+    id: element.dataset.entityId,
+  };
+}
+
 function drawDebugNodes(displayMap, typeName) {
   const layer = svgDomElt?.getElementById("nodes");
   if (!layer) return;
@@ -1274,6 +1575,7 @@ function initMapInteractions() {
   svgDomElt.addEventListener("pointermove", onMapPointerMove);
   svgDomElt.addEventListener("pointerup", onMapPointerUp);
   svgDomElt.addEventListener("pointercancel", onMapPointerUp);
+  svgDomElt.addEventListener("pointerleave", onMapPointerLeave);
   svgDomElt.addEventListener("dblclick", () => resetCamera(settings.size));
 }
 
@@ -1292,6 +1594,7 @@ function onMapPointerDown(event) {
   if (!point) return;
 
   event.preventDefault();
+  setHoveredEntity(null);
   panState.active = true;
   panState.pointerId = event.pointerId;
   panState.lastPoint = point;
@@ -1300,7 +1603,18 @@ function onMapPointerDown(event) {
 }
 
 function onMapPointerMove(event) {
-  if (!panState.active || panState.pointerId !== event.pointerId || !svgDomElt) return;
+  if (!svgDomElt) return;
+
+  if (!panState.active) {
+    if (!isHoverInspectionEnabled()) {
+      setHoveredEntity(null);
+      return;
+    }
+    setHoveredEntity(hoverTargetFromEventTarget(event.target));
+    return;
+  }
+
+  if (panState.pointerId !== event.pointerId) return;
 
   const nextPoint = clientToMapPoint(event.clientX, event.clientY);
   if (!nextPoint || !panState.lastPoint) return;
@@ -1322,6 +1636,11 @@ function onMapPointerUp(event) {
   panState.lastPoint = null;
   svgDomElt.classList.remove("is-panning");
   svgDomElt.releasePointerCapture?.(event.pointerId);
+}
+
+function onMapPointerLeave() {
+  if (panState.active) return;
+  setHoveredEntity(null);
 }
 
 function zoomAtClientPoint(clientX, clientY, scale) {

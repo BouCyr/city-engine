@@ -18,6 +18,7 @@ import {
 } from "./replay-service.mjs";
 import {steps} from "./steps.mjs";
 import {settingsForStep} from "./ui/settings-panel.mjs";
+import {buildHoverIndex, describeHoveredEntity} from "./ui/map-hover.mjs";
 import {
   AREA_KIND_INNER_SEA,
   AREA_KIND_OPEN_SEA,
@@ -163,6 +164,44 @@ function createRectCellFixture(id, x1, y1, x2, y2) {
     Edge(`${id}-left`, bottomLeft, topLeft, EDGE_TYPE_TEST_FIXTURE),
   ];
   return Cell(id, edges);
+}
+
+function createHoverFixture() {
+  const settings = new Settings("hover-fixture");
+  const map = new Map(settings);
+  const a = Node("A", 0, 0, NODE_TYPE_TEST_FIXTURE);
+  const b = Node("B", 10, 0, NODE_TYPE_TEST_FIXTURE, null, [MAP_FLAG_TEST_GATE]);
+  const c = Node("C", 10, 10, NODE_TYPE_TEST_FIXTURE);
+  const d = Node("D", 0, 10, NODE_TYPE_TEST_FIXTURE);
+  const e = Node("E", 20, 0, NODE_TYPE_TEST_FIXTURE);
+  const f = Node("F", 20, 10, NODE_TYPE_TEST_FIXTURE);
+
+  const ab = Edge("AB", a, b, EDGE_TYPE_LAND);
+  const bc = Edge("BC", b, c, EDGE_TYPE_RIVER, null, [MAP_FLAG_RIVER]);
+  const cd = Edge("CD", c, d, EDGE_TYPE_LAND);
+  const da = Edge("DA", d, a, EDGE_TYPE_LAND);
+  const be = Edge("BE", b, e, EDGE_TYPE_MOUTH);
+  const ef = Edge("EF", e, f, EDGE_TYPE_LAND);
+  const fc = Edge("FC", f, c, EDGE_TYPE_BANK);
+
+  const left = Cell("left", [ab, bc, cd, da], null, null, [TERRAIN_LAND]);
+  left.type = TERRAIN_LAND;
+  const right = Cell("right", [be, ef, fc, bc], null, null, [TERRAIN_RIVER]);
+  right.type = TERRAIN_RIVER;
+
+  ab.leftCell = left;
+  bc.leftCell = left;
+  bc.rightCell = right;
+  cd.leftCell = left;
+  da.leftCell = left;
+  be.leftCell = right;
+  ef.leftCell = right;
+  fc.leftCell = right;
+
+  map.nodes.push(a, b, c, d, e, f);
+  map.edges.push(ab, bc, cd, da, be, ef, fc);
+  map.cells.push(left, right);
+  return {map, left, right, shared: bc, node: b};
 }
 
 function validateCloneIdentityAndFlags() {
@@ -464,6 +503,43 @@ function validateMapClearClearsOverlay() {
   assert.equal(layers.get("nodes").innerHTML, "");
   assert.equal(layers.get("edges").innerHTML, "");
   assert.equal(layers.get("overlay").innerHTML, "");
+  assert.equal(layers.get("interactions").innerHTML, "");
+}
+
+function validateHoverIndexBuildsCellNeighborsAndArea() {
+  const {map, left, right} = createHoverFixture();
+  const index = buildHoverIndex(map);
+  const hovered = describeHoveredEntity(index, {kind: "cell", id: left.id});
+
+  assert.equal(hovered.details.area, 100);
+  assert.deepEqual(hovered.details.neighborIds, [right.id]);
+  assert.deepEqual(hovered.details.edgeTypeCounts, [
+    [EDGE_TYPE_LAND, 3],
+    [EDGE_TYPE_RIVER, 1],
+  ]);
+  assert.deepEqual([...hovered.highlight.cells], [left.id, right.id]);
+}
+
+function validateHoverIndexBuildsConnectedEdgesAndNodes() {
+  const {map, shared} = createHoverFixture();
+  const index = buildHoverIndex(map);
+  const hovered = describeHoveredEntity(index, {kind: "edge", id: shared.id});
+
+  assert.deepEqual(hovered.details.connectedNodeIds, ["B", "C"]);
+  assert.deepEqual(hovered.details.connectedCellIds, ["left", "right"]);
+  assert.deepEqual(hovered.details.connectedEdgeIds, ["AB", "BE", "CD", "FC"]);
+  assert.deepEqual(hovered.details.tags, [MAP_FLAG_RIVER]);
+}
+
+function validateHoverIndexBuildsConnectedCellsAndNeighboringNodesForNode() {
+  const {map, node} = createHoverFixture();
+  const index = buildHoverIndex(map);
+  const hovered = describeHoveredEntity(index, {kind: "node", id: node.id});
+
+  assert.deepEqual(hovered.details.connectedEdgeIds, ["AB", "BC", "BE"]);
+  assert.deepEqual(hovered.details.connectedCellIds, ["left", "right"]);
+  assert.deepEqual(hovered.details.neighboringNodeIds, ["A", "C", "E"]);
+  assert.deepEqual(hovered.details.tags, [MAP_FLAG_TEST_GATE]);
 }
 
 function validateCellDrawing() {
@@ -2739,6 +2815,9 @@ validateStepSettingsOwnershipAndReadOnlySharing();
 validateGatherVoronoi();
 validateGatherReplay();
 validateMapClearClearsOverlay();
+validateHoverIndexBuildsCellNeighborsAndArea();
+validateHoverIndexBuildsConnectedEdgesAndNodes();
+validateHoverIndexBuildsConnectedCellsAndNeighboringNodesForNode();
 validateCellDrawing();
 validateAreaBoundaryPathSeparatesCornerTouchingCells();
 validateAreaBoundaryPathMergesEdgeConnectedCells();
